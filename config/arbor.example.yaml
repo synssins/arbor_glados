@@ -1,0 +1,192 @@
+# arbor.example.yaml
+# Copy to arbor.yaml and configure for your environment.
+# ALL values must be set — no defaults are assumed in code.
+# DO NOT commit arbor.yaml to source control (it may contain secrets).
+
+version: "1.0"
+
+# ============================================================
+# Server Configuration
+# ============================================================
+server:
+  host: "0.0.0.0"           # Bind address. Use 127.0.0.1 to restrict to localhost.
+  port: 8443                 # HTTPS port. Use 443 in production with a reverse proxy.
+  tls:
+    enabled: true            # TLS must be true in production. false only for development.
+    cert_path: "/etc/arbor/tls/server.crt"
+    key_path: "/etc/arbor/tls/server.key"
+    ca_path: "/etc/arbor/tls/ca.crt"    # CA cert for node cert validation
+  cors:
+    allowed_origins:
+      - "https://arbor.local"
+      - "https://YOUR_WEBUI_HOSTNAME"
+
+# ============================================================
+# Security Configuration
+# ============================================================
+security:
+  api_key_min_length: 32           # Minimum API key length on creation
+  api_key_hash_algorithm: "argon2id"
+  argon2_time_cost: 3
+  argon2_memory_cost: 65536
+  argon2_parallelism: 4
+  jwt_private_key_path: "/etc/arbor/jwt/private.pem"
+  jwt_public_key_path: "/etc/arbor/jwt/public.pem"
+  jwt_algorithm: "RS256"
+  jwt_expiry_minutes: 60
+  session_cookie_name: "sb_session"
+  session_cookie_secure: true
+  session_cookie_samesite: "strict"
+
+# ============================================================
+# Rate Limiting
+# ============================================================
+rate_limiting:
+  default_rpm: 300                 # Default requests/minute per API key
+  admin_rpm: 60                    # Admin-scope rate limit
+  stream_rpm: 600                  # Stream-scope rate limit (higher for event subscriptions)
+  emergency_stop_exempt: true      # Emergency stop is never rate limited
+  burst_allowance: 20              # Short burst above rpm allowed before throttle
+
+# ============================================================
+# AI Constraints
+# AI API keys receive these additional restrictions on top of normal limits.
+# ============================================================
+ai_constraints:
+  max_servo_speed_pct: 60          # AI limited to 60% of configured max speed
+  max_servo_acceleration_pct: 50
+  command_rpm: 120                 # Separate rate limit for AI key scope
+  require_confirmation_for:        # These commands cannot be executed by AI keys
+    - "stepper.home"
+    - "system.restart"
+    - "system.ota.trigger"
+    - "auth.*"
+  blacklisted_endpoints:
+    - "/api/v1/auth/*"
+    - "/api/v1/system/ota/*"
+    - "/api/v1/nodes/*/delete"
+
+# ============================================================
+# Database
+# ============================================================
+database:
+  backend: "sqlite"                # sqlite | postgresql
+  sqlite_path: "/var/lib/arbor/arbor.db"
+  # postgresql_url: "postgresql+asyncpg://user:pass@host/dbname"
+
+# ============================================================
+# Logging
+# ============================================================
+logging:
+  level: "INFO"                    # DEBUG | INFO | WARNING | ERROR
+  format: "json"                   # json | text
+  output_path: "/var/log/arbor/control.log"
+  max_bytes: 52428800              # 50MB
+  backup_count: 5
+  audit_log_path: "/var/log/arbor/audit.log"
+
+# ============================================================
+# Plugin Search Paths (in addition to entry_points)
+# ============================================================
+plugins:
+  search_paths:
+    - "/etc/arbor/plugins"
+    - "/usr/local/lib/arbor/plugins"
+
+# ============================================================
+# Nodes
+# ============================================================
+nodes:
+  - id: "node-01"                  # Unique identifier — slug format
+    name: "Primary Arm Node"       # Human-readable
+    type: "esp32-s3"               # esp32 | esp32-s3 | esp32-c3 | esp32-p4 | pi | jetson | klipper
+    transport: "uart"              # uart | usb | wifi | ethernet
+    transport_config:
+      port: "/dev/ttyUSB0"         # Serial port (uart/usb)
+      baud: 921600
+      # host: "192.168.1.100"      # (wifi/ethernet)
+      # port: 8443                 # (wifi/ethernet)
+    tls:
+      node_cert: "/etc/arbor/nodes/node-01.crt"  # Client cert for this node
+    modules:
+      - type: "servo-bus"
+        id: "servo-bus-01"
+        config:
+          protocol: "scs"          # scs | sts | dynamixel-ax | dynamixel-x
+          baud: 1000000
+          servos:
+            - id: 1
+              name: "base-rotation"
+              min_position: 0
+              max_position: 4095
+              max_speed: 2000
+              max_acceleration: 500
+            - id: 2
+              name: "shoulder"
+              min_position: 200
+              max_position: 3800
+              max_speed: 1500
+              max_acceleration: 300
+      - type: "sensor-temp"
+        id: "temp-01"
+        config:
+          sensor_type: "ds18b20"   # ds18b20 | dht22 | bme280
+          pin: 4
+          poll_interval_ms: 5000
+          alert_threshold_c: 75.0  # Trigger emergency stop above this temp
+
+  # Example: BigTreeTech Klipper-managed motion control board
+  # The board runs Klipper firmware. Arbor Core talks to it via Moonraker.
+  # Moonraker must be running on the same Pi as the Control Server (or network-accessible).
+  - id: "motion-node-01"
+    name: "SKR Pico Motion Controller"
+    type: "klipper"                # klipper type = managed via Moonraker
+    board_model: "btt-skr-pico"   # btt-skr-pico | btt-manta-m8p | btt-octopus | generic-rp2040 | generic-stm32
+    mcu: "rp2040"                  # rp2040 | stm32f446 | stm32h723 | stm32g0b1 | lpc1769
+    moonraker:
+      host: "127.0.0.1"           # Moonraker host — usually localhost
+      port: 7125                   # Moonraker default port
+      api_key: ""                  # Moonraker API key if auth enabled (leave empty if on localhost)
+      tls: false                   # Set true if Moonraker is behind HTTPS reverse proxy
+    klipper_config_path: "/home/pi/printer_data/config/printer.cfg"  # Path to Klipper printer.cfg
+    modules:
+      - type: "stepper"
+        id: "stepper-x"
+        config:
+          klipper_stepper_name: "stepper_x"   # Must match name in printer.cfg
+          min_position_mm: 0.0
+          max_position_mm: 300.0
+          max_speed_mm_s: 150.0
+          max_acceleration_mm_s2: 2000.0
+          homing_speed_mm_s: 25.0
+      - type: "stepper"
+        id: "stepper-y"
+        config:
+          klipper_stepper_name: "stepper_y"
+          min_position_mm: 0.0
+          max_position_mm: 300.0
+          max_speed_mm_s: 150.0
+          max_acceleration_mm_s2: 2000.0
+          homing_speed_mm_s: 25.0
+      - type: "fan-pwm"
+        id: "fan-01"
+        config:
+          klipper_fan_name: "fan"             # Maps to [fan] in printer.cfg
+          min_duty_pct: 0
+          max_duty_pct: 100
+      - type: "sensor-temp"
+        id: "mcu-temp"
+        config:
+          klipper_sensor_name: "temperature_host"
+          poll_interval_ms: 10000
+          alert_threshold_c: 80.0
+
+# ============================================================
+# WebUI
+# ============================================================
+webui:
+  enabled: true
+  static_path: "/usr/local/share/arbor/webui"
+  session_timeout_minutes: 480    # 8 hours
+  # WebUI users are separate from API key holders
+  # User accounts managed via admin API or CLI tool

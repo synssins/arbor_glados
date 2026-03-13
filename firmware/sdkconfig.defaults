@@ -1,0 +1,47 @@
+# Arbor default sdkconfig
+# These values are applied when sdkconfig does not exist.
+# Zero hardcoded values in code — all tunables live here or in NVS.
+
+# Target: ESP32 (Xtensa dual-core)
+CONFIG_IDF_TARGET="esp32"
+
+# Flash size (Waveshare board has 4MB+)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Partition table — custom for OTA support
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# FreeRTOS
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_UNICORE=n
+
+# Enable mbedTLS for HTTPS
+CONFIG_MBEDTLS_HARDWARE_AES=y
+CONFIG_MBEDTLS_HARDWARE_SHA=y
+
+# HTTP server
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# WebSocket support
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# NVS (non-volatile storage for config)
+CONFIG_NVS_ENCRYPTION=n
+
+# Logging — default INFO, changeable at runtime via config
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_VERBOSE=y
+
+# Stack sizes
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Watchdog
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# UART for servo bus (1Mbps half-duplex)
+CONFIG_UART_ISR_IN_IRAM=y
+
+# SPIFFS for WebUI static files
+CONFIG_SPIFFS_MAX_PARTITIONS=1

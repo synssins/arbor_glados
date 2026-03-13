@@ -1,0 +1,45 @@
+[Unit]
+Description=Arbor Core Control Server
+Documentation=https://github.com/chriskliewer/arbor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arbor
+Group=arbor
+
+# Configuration via environment
+Environment=ARBOR_CONFIG=/etc/arbor/arbor.yaml
+
+# Working directory
+WorkingDirectory=/opt/arbor
+
+# Start the control server
+ExecStart=/opt/arbor/venv/bin/arbor
+
+# Graceful shutdown (SIGTERM -> uvicorn handles it)
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/arbor /var/log/arbor
+PrivateTmp=true
+
+# Allow access to serial ports (for UART/USB bridges)
+SupplementaryGroups=dialout
+
+# Logging goes to journald (structlog JSON output)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=arbor
+
+[Install]
+WantedBy=multi-user.target

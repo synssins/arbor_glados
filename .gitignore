@@ -1,0 +1,84 @@
+# Arbor .gitignore
+
+# ============================================
+# Claude Code / AI agent working files
+# ============================================
+.claude/
+CLAUDE.md
+AGENTS.md
+PHASE1_TASKS.md
+decisions/
+
+# ============================================
+# Secrets — NEVER commit these
+# ============================================
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.env
+*.env.*
+secrets/
+credentials/
+arbor.yaml               # Actual config (only example goes in repo)
+
+# ============================================
+# Runtime data
+# ============================================
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.pid
+
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.so
+
+# ============================================
+# Node / WebUI
+# ============================================
+node_modules/
+webui/dist/
+webui/.vite/
+*.tsbuildinfo
+
+# ============================================
+# ESP-IDF build artifacts
+# ============================================
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+# NOTE: sdkconfig.defaults IS committed — it's the baseline config without secrets
+
+# ============================================
+# IDE
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ============================================
+# Deployment
+# ============================================
+deploy/.env
+deploy/docker-compose.override.yml

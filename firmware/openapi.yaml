@@ -1,0 +1,661 @@
+openapi: "3.0.3"
+info:
+  title: Arbor Node API
+  description: |
+    REST API exposed by the Arbor ESP32 firmware.
+    This is the on-device API — the control server proxies these endpoints.
+    Authentication uses Bearer tokens with SHA-256 hashed API keys.
+  version: "0.1.0"
+  contact:
+    name: Arbor
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://{host}:{port}/api/v1
+    description: Node HTTPS (default)
+    variables:
+      host:
+        default: arbor.local
+      port:
+        default: "8443"
+  - url: http://{host}:{port}/api/v1
+    description: Node HTTP (provisioning/dev)
+    variables:
+      host:
+        default: arbor.local
+      port:
+        default: "8443"
+
+tags:
+  - name: system
+    description: System information, health, configuration, OTA
+  - name: servo
+    description: Servo motor control via Feetech STS bus
+  - name: sensor
+    description: Temperature and endstop sensor readings
+  - name: emergency
+    description: Emergency stop (exempt from rate limiting)
+  - name: modules
+    description: Plugin/module management
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ── System ──
+  /system/info:
+    get:
+      tags: [system]
+      summary: Get system information
+      description: Returns firmware version, chip info, heap stats, plugin list.
+      responses:
+        "200":
+          description: System information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+
+  /system/health:
+    get:
+      tags: [system]
+      summary: Health check
+      description: Aggregated health from all plugins. Public — no auth required.
+      security: []
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /health:
+    get:
+      tags: [system]
+      summary: Health check (alias)
+      description: Alias for /system/health. Public — no auth required.
+      security: []
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /system/config:
+    get:
+      tags: [system]
+      summary: Get current configuration
+      description: Returns full config with secrets redacted. Requires READ scope.
+      responses:
+        "200":
+          description: Current configuration
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [system]
+      summary: Update configuration
+      description: Validates, saves to NVS, updates running config. Requires ADMIN scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Configuration updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                  restart_required:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /system/restart:
+    post:
+      tags: [system]
+      summary: Restart the node
+      description: Triggers esp_restart() after sending response. Requires ADMIN scope.
+      responses:
+        "200":
+          description: Restarting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /system/ota:
+    get:
+      tags: [system]
+      summary: OTA partition status
+      description: Returns running/boot/next partitions, firmware version, partition table.
+      responses:
+        "200":
+          description: OTA status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OTAStatus"
+
+  /modules:
+    get:
+      tags: [modules]
+      summary: List all plugins
+      description: Returns registered plugins with version, initialized state, health.
+      responses:
+        "200":
+          description: Plugin list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  modules:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PluginInfo"
+                  count:
+                    type: integer
+
+  # ── Servo ──
+  /servo/{id}/state:
+    get:
+      tags: [servo]
+      summary: Get servo state
+      description: Read position, speed, load, temperature, voltage, torque from servo bus.
+      parameters:
+        - $ref: "#/components/parameters/ServoId"
+      responses:
+        "200":
+          description: Servo state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServoState"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /servo/{id}/position:
+    put:
+      tags: [servo]
+      summary: Set servo position
+      description: Command a servo to move to a target position. Requires WRITE scope.
+      parameters:
+        - $ref: "#/components/parameters/ServoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [position]
+              properties:
+                position:
+                  type: integer
+                  minimum: 0
+                  maximum: 4095
+                  description: Target position (0-4095)
+      responses:
+        "200":
+          description: Position command sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /servo/{id}/speed:
+    put:
+      tags: [servo]
+      summary: Set servo speed
+      description: Set the moving speed for a servo. Requires WRITE scope.
+      parameters:
+        - $ref: "#/components/parameters/ServoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [speed]
+              properties:
+                speed:
+                  type: integer
+                  minimum: 0
+                  maximum: 4095
+      responses:
+        "200":
+          description: Speed command sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /servo/{id}/torque:
+    put:
+      tags: [servo]
+      summary: Enable/disable servo torque
+      description: Toggle torque on a specific servo. Requires WRITE scope.
+      parameters:
+        - $ref: "#/components/parameters/ServoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Torque command sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /servo/sync:
+    post:
+      tags: [servo]
+      summary: Synchronized multi-servo move
+      description: |
+        Send coordinated position commands to multiple servos in a single
+        sync-write packet. Requires WRITE scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [moves]
+              properties:
+                moves:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, position]
+                    properties:
+                      id:
+                        type: integer
+                      position:
+                        type: integer
+      responses:
+        "200":
+          description: Sync move sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /servo/scan:
+    get:
+      tags: [servo]
+      summary: Scan servo bus
+      description: Ping all servo IDs (0-253) and return found IDs. Requires READ scope.
+      responses:
+        "200":
+          description: Scan results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  found_ids:
+                    type: array
+                    items:
+                      type: integer
+                  count:
+                    type: integer
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  # ── Sensor ──
+  /sensors:
+    get:
+      tags: [sensor]
+      summary: Get all sensor readings
+      description: Returns state from all sensor plugins (temperature, endstops).
+      responses:
+        "200":
+          description: All sensor readings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sensors:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SensorEntry"
+
+  /sensor/{id}/reading:
+    get:
+      tags: [sensor]
+      summary: Get sensor reading
+      description: |
+        Read current value from a specific sensor.
+        Sensor ID convention: "temp-0" for temperature, "endstop-0" for endstops.
+      parameters:
+        - $ref: "#/components/parameters/SensorId"
+      responses:
+        "200":
+          description: Sensor reading
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /sensor/{id}/history:
+    get:
+      tags: [sensor]
+      summary: Get sensor history
+      description: Returns historical readings (most recent first).
+      parameters:
+        - $ref: "#/components/parameters/SensorId"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 64
+          description: Maximum number of readings to return
+      responses:
+        "200":
+          description: Sensor history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sensor_id:
+                    type: string
+                  readings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        temperature:
+                          type: number
+                        timestamp_us:
+                          type: number
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  # ── Emergency ──
+  /emergency-stop:
+    post:
+      tags: [emergency]
+      summary: Emergency stop
+      description: |
+        Immediately disable torque on ALL servos across ALL plugins.
+        This endpoint is EXEMPT from rate limiting and authentication.
+        Must complete within 100ms.
+      security: []
+      responses:
+        "200":
+          description: Emergency stop result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyStopResult"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        API key as Bearer token. Keys are SHA-256 hashed with per-key salt
+        and stored in NVS. In provisioning mode (no keys loaded), all
+        requests are allowed.
+
+  parameters:
+    ServoId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 253
+      description: Servo bus ID
+
+    SensorId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: "Sensor ID (e.g., temp-0, endstop-0)"
+
+  responses:
+    NotFound:
+      description: Not found (also used for unauthorized per SECURITY.md)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+    BadGateway:
+      description: Plugin not available
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+
+  schemas:
+    SystemInfo:
+      type: object
+      properties:
+        platform:
+          type: string
+          example: esp32
+        firmware_version:
+          type: string
+          example: "0.1.0"
+        project_name:
+          type: string
+        idf_version:
+          type: string
+        cores:
+          type: integer
+        free_heap:
+          type: integer
+        min_free_heap:
+          type: integer
+        plugin_count:
+          type: integer
+        ws_clients:
+          type: integer
+        plugins:
+          type: array
+          items:
+            $ref: "#/components/schemas/PluginInfo"
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        free_heap:
+          type: integer
+        provisioned:
+          type: boolean
+        components:
+          type: array
+          items:
+            type: object
+            properties:
+              status:
+                type: string
+              message:
+                type: string
+
+    OTAStatus:
+      type: object
+      properties:
+        running:
+          type: object
+          properties:
+            label:
+              type: string
+            address:
+              type: integer
+            size:
+              type: integer
+            type:
+              type: string
+        next_update:
+          type: object
+          properties:
+            label:
+              type: string
+        version:
+          type: string
+        ota_supported:
+          type: boolean
+        partitions:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              size:
+                type: integer
+              is_running:
+                type: boolean
+
+    PluginInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          example: servo-bus
+        version:
+          type: string
+          example: "1.0.0"
+        initialized:
+          type: boolean
+        health:
+          type: string
+          enum: [healthy, degraded, unhealthy, unknown, not_initialized]
+        health_message:
+          type: string
+
+    ServoState:
+      type: object
+      properties:
+        id:
+          type: integer
+        position:
+          type: integer
+          description: Current position (0-4095)
+        speed:
+          type: integer
+        load:
+          type: integer
+        temperature:
+          type: integer
+          description: Temperature in degrees C
+        voltage:
+          type: integer
+          description: Voltage in 0.1V units
+        torque_on:
+          type: boolean
+
+    CommandResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+
+    SensorEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [temperature, endstop]
+        state:
+          type: object
+
+    EmergencyStopResult:
+      type: object
+      properties:
+        stopped:
+          type: boolean
+        elapsed_us:
+          type: number
+          description: Time taken in microseconds
+        deadline_met:
+          type: boolean
+          description: Whether the 100ms deadline was met
+        plugins:
+          type: array
+          items:
+            type: object
+            properties:
+              plugin:
+                type: string
+              stopped:
+                type: boolean

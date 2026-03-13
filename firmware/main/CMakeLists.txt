@@ -1,0 +1,44 @@
+# Main component — Arbor ESP firmware entry point
+idf_component_register(
+    SRCS
+        "main.c"
+        "app_config.c"
+        "pin_validator.c"
+        "http_server.c"
+        "ws_server.c"
+        "webui_server.c"
+        "wifi_manager.c"
+        "oled_display.c"
+        "plugin_manager.c"
+        "api_auth.c"
+        "api_system.c"
+        "api_servo.c"
+        "api_sensor.c"
+        "api_emergency.c"
+        "api_ota.c"
+        "api_led.c"
+        "event_bus.c"
+        "json_util.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        nvs_flash
+        esp_http_server
+        esp_wifi
+        esp_event
+        esp_netif
+        esp_timer
+        json
+        mbedtls
+        driver
+        app_update
+        esp_partition
+        spiffs
+        sb_common
+    PRIV_REQUIRES
+        servo_bus
+        servo_pwm
+        sensor_temp
+        sensor_endstop
+        led_ws2812
+        bldc_driver
+)

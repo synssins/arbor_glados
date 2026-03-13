@@ -1,0 +1,44 @@
+menu "Arbor Configuration"
+
+    config SB_DEFAULT_API_PORT
+        int "Default HTTPS API port"
+        default 8443
+        range 1 65535
+        help
+            Default HTTPS port. Overridden by NVS config at runtime.
+
+    config SB_MAX_PLUGINS
+        int "Maximum loaded plugins"
+        default 16
+        range 1 32
+        help
+            Maximum number of simultaneously loaded plugin modules.
+
+    config SB_MAX_WS_CLIENTS
+        int "Maximum WebSocket clients"
+        default 4
+        range 1 16
+        help
+            Maximum simultaneous WebSocket connections.
+
+    config SB_EVENT_QUEUE_SIZE
+        int "Event bus queue depth"
+        default 64
+        range 8 256
+        help
+            Maximum pending events in the event bus queue.
+
+    config SB_NVS_NAMESPACE
+        string "NVS namespace for config"
+        default "arbor"
+        help
+            NVS namespace used for all Arbor configuration keys.
+
+    config SB_JSON_BUFFER_SIZE
+        int "JSON serialization buffer size (bytes)"
+        default 4096
+        range 512 16384
+        help
+            Buffer size for JSON request/response serialization.
+
+endmenu

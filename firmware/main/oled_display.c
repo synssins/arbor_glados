@@ -1,0 +1,306 @@
+/**
+ * @file oled_display.c
+ * @brief SSD1306 128x32 OLED driver over I2C.
+ *
+ * Minimal driver: init, clear, text rendering with 5x7 font, flush.
+ * Displays board ID, WiFi mode, SSID, password/IP.
+ *
+ * Waveshare Servo Driver with ESP32: SDA=GPIO21, SCL=GPIO22.
+ * I2C address: 0x3C (standard SSD1306).
+ */
+
+#include "oled_display.h"
+#include "wifi_manager.h"
+#include "version.h"
+
+#include <string.h>
+#include <stdio.h>
+#include "esp_log.h"
+#include "driver/i2c_master.h"
+
+static const char *TAG = "sb_oled";
+
+#define SSD1306_ADDR        0x3C
+#define OLED_WIDTH          128
+#define OLED_HEIGHT         32
+#define OLED_PAGES          (OLED_HEIGHT / 8)  /* 4 pages */
+
+static i2c_master_bus_handle_t s_bus = NULL;
+static i2c_master_dev_handle_t s_dev = NULL;
+static uint8_t s_framebuf[OLED_PAGES][OLED_WIDTH];
+static bool s_initialized = false;
+
+/* ── Minimal 5x7 ASCII font (chars 32-126) ── */
+static const uint8_t font5x7[][5] = {
+    {0x00,0x00,0x00,0x00,0x00}, /* 32 space */
+    {0x00,0x00,0x5F,0x00,0x00}, /* 33 ! */
+    {0x00,0x07,0x00,0x07,0x00}, /* 34 " */
+    {0x14,0x7F,0x14,0x7F,0x14}, /* 35 # */
+    {0x24,0x2A,0x7F,0x2A,0x12}, /* 36 $ */
+    {0x23,0x13,0x08,0x64,0x62}, /* 37 % */
+    {0x36,0x49,0x55,0x22,0x50}, /* 38 & */
+    {0x00,0x05,0x03,0x00,0x00}, /* 39 ' */
+    {0x00,0x1C,0x22,0x41,0x00}, /* 40 ( */
+    {0x00,0x41,0x22,0x1C,0x00}, /* 41 ) */
+    {0x08,0x2A,0x1C,0x2A,0x08}, /* 42 * */
+    {0x08,0x08,0x3E,0x08,0x08}, /* 43 + */
+    {0x00,0x50,0x30,0x00,0x00}, /* 44 , */
+    {0x08,0x08,0x08,0x08,0x08}, /* 45 - */
+    {0x00,0x60,0x60,0x00,0x00}, /* 46 . */
+    {0x20,0x10,0x08,0x04,0x02}, /* 47 / */
+    {0x3E,0x51,0x49,0x45,0x3E}, /* 48 0 */
+    {0x00,0x42,0x7F,0x40,0x00}, /* 49 1 */
+    {0x42,0x61,0x51,0x49,0x46}, /* 50 2 */
+    {0x21,0x41,0x45,0x4B,0x31}, /* 51 3 */
+    {0x18,0x14,0x12,0x7F,0x10}, /* 52 4 */
+    {0x27,0x45,0x45,0x45,0x39}, /* 53 5 */
+    {0x3C,0x4A,0x49,0x49,0x30}, /* 54 6 */
+    {0x01,0x71,0x09,0x05,0x03}, /* 55 7 */
+    {0x36,0x49,0x49,0x49,0x36}, /* 56 8 */
+    {0x06,0x49,0x49,0x29,0x1E}, /* 57 9 */
+    {0x00,0x36,0x36,0x00,0x00}, /* 58 : */
+    {0x00,0x56,0x36,0x00,0x00}, /* 59 ; */
+    {0x00,0x08,0x14,0x22,0x41}, /* 60 < */
+    {0x14,0x14,0x14,0x14,0x14}, /* 61 = */
+    {0x41,0x22,0x14,0x08,0x00}, /* 62 > */
+    {0x02,0x01,0x51,0x09,0x06}, /* 63 ? */
+    {0x32,0x49,0x79,0x41,0x3E}, /* 64 @ */
+    {0x7E,0x11,0x11,0x11,0x7E}, /* 65 A */
+    {0x7F,0x49,0x49,0x49,0x36}, /* 66 B */
+    {0x3E,0x41,0x41,0x41,0x22}, /* 67 C */
+    {0x7F,0x41,0x41,0x22,0x1C}, /* 68 D */
+    {0x7F,0x49,0x49,0x49,0x41}, /* 69 E */
+    {0x7F,0x09,0x09,0x01,0x01}, /* 70 F */
+    {0x3E,0x41,0x41,0x51,0x32}, /* 71 G */
+    {0x7F,0x08,0x08,0x08,0x7F}, /* 72 H */
+    {0x00,0x41,0x7F,0x41,0x00}, /* 73 I */
+    {0x20,0x40,0x41,0x3F,0x01}, /* 74 J */
+    {0x7F,0x08,0x14,0x22,0x41}, /* 75 K */
+    {0x7F,0x40,0x40,0x40,0x40}, /* 76 L */
+    {0x7F,0x02,0x04,0x02,0x7F}, /* 77 M */
+    {0x7F,0x04,0x08,0x10,0x7F}, /* 78 N */
+    {0x3E,0x41,0x41,0x41,0x3E}, /* 79 O */
+    {0x7F,0x09,0x09,0x09,0x06}, /* 80 P */
+    {0x3E,0x41,0x51,0x21,0x5E}, /* 81 Q */
+    {0x7F,0x09,0x19,0x29,0x46}, /* 82 R */
+    {0x46,0x49,0x49,0x49,0x31}, /* 83 S */
+    {0x01,0x01,0x7F,0x01,0x01}, /* 84 T */
+    {0x3F,0x40,0x40,0x40,0x3F}, /* 85 U */
+    {0x1F,0x20,0x40,0x20,0x1F}, /* 86 V */
+    {0x7F,0x20,0x18,0x20,0x7F}, /* 87 W */
+    {0x63,0x14,0x08,0x14,0x63}, /* 88 X */
+    {0x03,0x04,0x78,0x04,0x03}, /* 89 Y */
+    {0x61,0x51,0x49,0x45,0x43}, /* 90 Z */
+    {0x00,0x00,0x7F,0x41,0x41}, /* 91 [ */
+    {0x02,0x04,0x08,0x10,0x20}, /* 92 \ */
+    {0x41,0x41,0x7F,0x00,0x00}, /* 93 ] */
+    {0x04,0x02,0x01,0x02,0x04}, /* 94 ^ */
+    {0x40,0x40,0x40,0x40,0x40}, /* 95 _ */
+    {0x00,0x01,0x02,0x04,0x00}, /* 96 ` */
+    {0x20,0x54,0x54,0x54,0x78}, /* 97 a */
+    {0x7F,0x48,0x44,0x44,0x38}, /* 98 b */
+    {0x38,0x44,0x44,0x44,0x20}, /* 99 c */
+    {0x38,0x44,0x44,0x48,0x7F}, /* 100 d */
+    {0x38,0x54,0x54,0x54,0x18}, /* 101 e */
+    {0x08,0x7E,0x09,0x01,0x02}, /* 102 f */
+    {0x08,0x14,0x54,0x54,0x3C}, /* 103 g */
+    {0x7F,0x08,0x04,0x04,0x78}, /* 104 h */
+    {0x00,0x44,0x7D,0x40,0x00}, /* 105 i */
+    {0x20,0x40,0x44,0x3D,0x00}, /* 106 j */
+    {0x00,0x7F,0x10,0x28,0x44}, /* 107 k */
+    {0x00,0x41,0x7F,0x40,0x00}, /* 108 l */
+    {0x7C,0x04,0x18,0x04,0x78}, /* 109 m */
+    {0x7C,0x08,0x04,0x04,0x78}, /* 110 n */
+    {0x38,0x44,0x44,0x44,0x38}, /* 111 o */
+    {0x7C,0x14,0x14,0x14,0x08}, /* 112 p */
+    {0x08,0x14,0x14,0x18,0x7C}, /* 113 q */
+    {0x7C,0x08,0x04,0x04,0x08}, /* 114 r */
+    {0x48,0x54,0x54,0x54,0x20}, /* 115 s */
+    {0x04,0x3F,0x44,0x40,0x20}, /* 116 t */
+    {0x3C,0x40,0x40,0x20,0x7C}, /* 117 u */
+    {0x1C,0x20,0x40,0x20,0x1C}, /* 118 v */
+    {0x3C,0x40,0x30,0x40,0x3C}, /* 119 w */
+    {0x44,0x28,0x10,0x28,0x44}, /* 120 x */
+    {0x0C,0x50,0x50,0x50,0x3C}, /* 121 y */
+    {0x44,0x64,0x54,0x4C,0x44}, /* 122 z */
+    {0x00,0x08,0x36,0x41,0x00}, /* 123 { */
+    {0x00,0x00,0x7F,0x00,0x00}, /* 124 | */
+    {0x00,0x41,0x36,0x08,0x00}, /* 125 } */
+    {0x08,0x08,0x2A,0x1C,0x08}, /* 126 ~ */
+};
+
+/* ── I2C helpers ── */
+
+static esp_err_t oled_cmd(uint8_t cmd)
+{
+    uint8_t buf[2] = {0x00, cmd};  /* Co=0, D/C#=0 → command */
+    return i2c_master_transmit(s_dev, buf, 2, 100);
+}
+
+static esp_err_t oled_data(const uint8_t *data, size_t len)
+{
+    /* Send in chunks: control byte 0x40 (Co=0, D/C#=1 → data) + data */
+    uint8_t buf[OLED_WIDTH + 1];
+    buf[0] = 0x40;
+    size_t chunk = (len > OLED_WIDTH) ? OLED_WIDTH : len;
+    memcpy(buf + 1, data, chunk);
+    return i2c_master_transmit(s_dev, buf, chunk + 1, 100);
+}
+
+/* ── SSD1306 init ── */
+
+static const uint8_t ssd1306_init_cmds[] = {
+    0xAE,       /* Display OFF */
+    0xD5, 0x80, /* Set clock div */
+    0xA8, 0x1F, /* Set multiplex: 32-1 = 0x1F for 128x32 */
+    0xD3, 0x00, /* Set display offset: 0 */
+    0x40,       /* Set start line: 0 */
+    0x8D, 0x14, /* Charge pump: enable */
+    0x20, 0x00, /* Memory addressing: horizontal */
+    0xA1,       /* Segment remap: col 127 = SEG0 */
+    0xC8,       /* COM scan direction: remapped */
+    0xDA, 0x02, /* COM pins config: sequential, no remap (128x32) */
+    0x81, 0x8F, /* Set contrast */
+    0xD9, 0xF1, /* Pre-charge period */
+    0xDB, 0x40, /* VCOMH deselect level */
+    0xA4,       /* Display from RAM */
+    0xA6,       /* Normal display (not inverted) */
+    0xAF,       /* Display ON */
+};
+
+esp_err_t sb_oled_init(int sda_pin, int scl_pin)
+{
+    if (sda_pin < 0 || scl_pin < 0) {
+        ESP_LOGW(TAG, "OLED pins not configured — display disabled");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Configure I2C master bus */
+    i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = sda_pin,
+        .scl_io_num = scl_pin,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+
+    esp_err_t ret = i2c_new_master_bus(&bus_cfg, &s_bus);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Add SSD1306 device */
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = SSD1306_ADDR,
+        .scl_speed_hz = 400000,
+    };
+
+    ret = i2c_master_bus_add_device(s_bus, &dev_cfg, &s_dev);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C device add failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Send init commands */
+    for (size_t i = 0; i < sizeof(ssd1306_init_cmds); i++) {
+        ret = oled_cmd(ssd1306_init_cmds[i]);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "OLED init cmd %zu failed", i);
+            return ret;
+        }
+    }
+
+    sb_oled_clear();
+    sb_oled_flush();
+
+    s_initialized = true;
+    ESP_LOGI(TAG, "SSD1306 128x32 OLED initialized (SDA=%d, SCL=%d)", sda_pin, scl_pin);
+    return ESP_OK;
+}
+
+void sb_oled_clear(void)
+{
+    memset(s_framebuf, 0, sizeof(s_framebuf));
+}
+
+void sb_oled_text(uint8_t row, const char *text)
+{
+    if (row >= OLED_PAGES || !text) return;
+
+    /* Clear the row first */
+    memset(s_framebuf[row], 0, OLED_WIDTH);
+
+    int x = 0;
+    for (const char *p = text; *p && x < OLED_WIDTH - 5; p++) {
+        uint8_t c = (uint8_t)*p;
+        if (c < 32 || c > 126) c = '?';
+
+        const uint8_t *glyph = font5x7[c - 32];
+        for (int col = 0; col < 5 && x < OLED_WIDTH; col++, x++) {
+            s_framebuf[row][x] = glyph[col];
+        }
+        /* 1px gap between chars */
+        if (x < OLED_WIDTH) {
+            s_framebuf[row][x] = 0x00;
+            x++;
+        }
+    }
+}
+
+void sb_oled_flush(void)
+{
+    if (!s_dev) return;
+
+    /* Set column and page address for full screen write */
+    oled_cmd(0x21); oled_cmd(0); oled_cmd(OLED_WIDTH - 1);  /* Column range */
+    oled_cmd(0x22); oled_cmd(0); oled_cmd(OLED_PAGES - 1);  /* Page range */
+
+    for (uint8_t page = 0; page < OLED_PAGES; page++) {
+        oled_data(s_framebuf[page], OLED_WIDTH);
+    }
+}
+
+void sb_oled_update_status(void)
+{
+    if (!s_initialized) return;
+
+    const sb_wifi_state_t *ws = sb_wifi_get_state();
+
+    sb_oled_clear();
+
+    /* Row 0: Board ID */
+    sb_oled_text(0, ws->board_id);
+
+    if (ws->ap_active && !ws->sta_connected) {
+        /* AP mode — show SSID and password */
+        char line[72];
+        snprintf(line, sizeof(line), "AP: %s", ws->ap_ssid);
+        sb_oled_text(1, line);
+
+        snprintf(line, sizeof(line), "PW: %s", ws->ap_password);
+        sb_oled_text(2, line);
+
+        snprintf(line, sizeof(line), "%s  v%s", ws->ip_addr, SB_VERSION);
+        sb_oled_text(3, line);
+    } else if (ws->sta_connected) {
+        /* STA mode — show SSID and IP */
+        char line[72];
+        snprintf(line, sizeof(line), "WiFi: %s", ws->sta_ssid);
+        sb_oled_text(1, line);
+
+        sb_oled_text(2, ws->ip_addr);
+
+        snprintf(line, sizeof(line), "v%s", SB_VERSION);
+        sb_oled_text(3, line);
+    } else {
+        sb_oled_text(1, "WiFi: connecting...");
+        char line[72];
+        snprintf(line, sizeof(line), "v%s", SB_VERSION);
+        sb_oled_text(3, line);
+    }
+
+    sb_oled_flush();
+}
