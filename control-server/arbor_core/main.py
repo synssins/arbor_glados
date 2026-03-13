@@ -1,10 +1,14 @@
 """
 Arbor Control Server entry point.
 
-This module provides the CLI entry point for running the server.
+This module provides both:
+- A module-level `app` for uvicorn CLI: `uvicorn arbor_core.main:app`
+- A `main()` CLI entry point for direct execution.
+
 All runtime configuration comes from config files or environment variables.
 """
 
+import logging
 import sys
 from typing import NoReturn
 
@@ -23,13 +27,17 @@ structlog.configure(
         if sys.stderr.isatty()
         else structlog.processors.JSONRenderer(),
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(0),  # 0 = NOTSET, show all
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     context_class=dict,
     logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,
 )
 
 logger = structlog.get_logger(__name__)
+
+# Module-level app instance for uvicorn CLI usage:
+#   uvicorn arbor_core.main:app --host 127.0.0.1 --port 8000
+app = create_app()
 
 
 def main() -> NoReturn:
@@ -41,12 +49,7 @@ def main() -> NoReturn:
     """
     logger.info("arbor_main_starting")
 
-    # Config loading will be implemented in C02/C03
-    # For now, create app without config
-    app = create_app()
-
     # Server settings will come from config (C02/C03)
-    # Using development defaults for now
     # TODO(C02/C03): Load from config.server.host, config.server.port, config.server.tls
     uvicorn.run(
         app,

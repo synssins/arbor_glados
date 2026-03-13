@@ -75,7 +75,7 @@ def create_app(config: "ArborConfig | None" = None) -> FastAPI:
     # For now, using restrictive defaults
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[],  # Will be populated from config.server.cors.allowed_origins
+        allow_origins=["*"],  # TODO(C02/C03): Populate from config.server.cors.allowed_origins
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
         allow_headers=["Authorization", "Content-Type"],
