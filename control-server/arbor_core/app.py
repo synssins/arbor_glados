@@ -88,6 +88,12 @@ def create_app(config: "ArborConfig | None" = None) -> FastAPI:
     # Mount API routers
     app.include_router(api_v1_router, prefix="/api/v1")
 
+    # Root-level health endpoint (nginx proxies /health directly)
+    @app.get("/health")
+    async def health():
+        """Root-level health check for load balancers and monitoring."""
+        return {"status": "ok", "version": app.version}
+
     logger.info("arbor_app_created")
 
     return app
