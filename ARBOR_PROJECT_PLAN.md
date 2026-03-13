@@ -707,7 +707,7 @@ Agent B reviews, adds its perspective to the same file
          │
          ▼
 STOP — Human Review Required
-Present DECISION_REQUEST_{N}.md to Chris for approval
+Present DECISION_REQUEST_{N}.md to user for approval
          │
          ├── Approved → proceed, update this plan, archive decision
          └── Rejected → archive decision with rejection reason, do not proceed
@@ -735,7 +735,7 @@ Agents may proceed autonomously for **minor decisions only**. The following scen
 
 **Agents must NOT:**
 
-- Make assumptions about Chris's hardware setup and hardcode them
+- Make assumptions about hardware setup and hardcode them
 - Skip security reviews to move faster
 - Implement features not in this plan as "nice to haves"
 - Merge breaking changes without a migration path
@@ -764,7 +764,7 @@ These decisions are finalized. Agents may not change them without a quorum + hum
 
 ## 14. Open Questions (Require Human Input)
 
-These items need Chris's decision before implementation. Agents must not proceed with them.
+These items need owner decision before implementation. Agents must not proceed with them.
 
 | # | Question | Context |
 |---|----------|---------|
