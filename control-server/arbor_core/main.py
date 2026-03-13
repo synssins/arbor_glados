@@ -23,7 +23,7 @@ structlog.configure(
         if sys.stderr.isatty()
         else structlog.processors.JSONRenderer(),
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(structlog.get_logger().level),
+    wrapper_class=structlog.make_filtering_bound_logger(0),  # 0 = NOTSET, show all
     context_class=dict,
     logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,
