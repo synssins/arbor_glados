@@ -672,7 +672,7 @@ When the `ros2-bridge` module is loaded:
 
 ### The Quorum Model
 
-Major decisions require a **quorum** of at least 2 agent perspectives before proceeding, AND explicit human approval from the project owner (Chris Kliewer).
+Major decisions require a **quorum** of at least 2 agent perspectives before proceeding, AND explicit human approval from the project owner.
 
 **What constitutes a major decision:**
 
