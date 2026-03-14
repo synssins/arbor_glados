@@ -380,6 +380,49 @@ class DatabaseConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Moonraker / Klipper
+# ---------------------------------------------------------------------------
+class MoonrakerConfig(BaseModel):
+    """Moonraker REST API connection settings."""
+
+    host: str = Field(
+        default="localhost",
+        description="Moonraker host address.",
+    )
+    port: int = Field(
+        default=7125,
+        ge=1,
+        le=65535,
+        description="Moonraker port.",
+    )
+    timeout: float = Field(
+        default=5.0,
+        gt=0,
+        description="HTTP request timeout in seconds.",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Enable Klipper/Moonraker integration.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Robotics
+# ---------------------------------------------------------------------------
+class RoboticsConfig(BaseModel):
+    """Robotics control system settings."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable the robotics control system.",
+    )
+    moonraker: MoonrakerConfig = Field(
+        default_factory=MoonrakerConfig,
+        description="Moonraker connection settings for Klipper backend.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Root config
 # ---------------------------------------------------------------------------
 class ArborConfig(BaseModel):
@@ -424,6 +467,10 @@ class ArborConfig(BaseModel):
     database: DatabaseConfig = Field(
         default_factory=DatabaseConfig,
         description="Database backend settings.",
+    )
+    robotics: RoboticsConfig = Field(
+        default_factory=RoboticsConfig,
+        description="Robotics control system settings.",
     )
 
     Annotated  # noqa: B018 — keeps import alive for future validators

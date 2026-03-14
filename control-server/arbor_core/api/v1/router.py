@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse
 from arbor_core.api.v1.auth_routes import auth_router
 from arbor_core.api.v1.device_routes import device_router
 from arbor_core.api.v1.emergency_routes import emergency_router
+from arbor_core.api.v1.klipper_routes import klipper_router
 from arbor_core.api.v1.node_routes import node_router
+from arbor_core.api.v1.robot_routes import robot_router
 from arbor_core.api.v1.sensor_routes import sensor_router, sensors_router
 from arbor_core.api.v1.servo_routes import servo_router
 from arbor_core.api.v1.system_routes import system_router
@@ -26,6 +28,8 @@ router.include_router(sensor_router)
 router.include_router(sensors_router)
 router.include_router(emergency_router)
 router.include_router(ws_router)
+router.include_router(robot_router)
+router.include_router(klipper_router)
 
 
 @router.get(
@@ -62,3 +66,5 @@ async def health_check() -> JSONResponse:
 # - emergency_router (C13): /emergency-stop
 # - auth_router (C15): /auth/login, /auth/logout, /auth/api-keys
 # - ws_router (C14): /ws WebSocket endpoint
+# - robot_router (Robotics): /robots CRUD + motion endpoints
+# - klipper_router (Robotics): /klipper G-code, status, objects

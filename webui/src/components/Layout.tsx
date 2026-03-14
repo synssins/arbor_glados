@@ -16,6 +16,8 @@ const navItems = [
   { to: '/', label: 'Dashboard' },
   { to: '/nodes', label: 'Nodes' },
   { to: '/servos', label: 'Servos' },
+  { to: '/robots', label: 'Robots' },
+  { to: '/klipper', label: 'Klipper' },
   { to: '/sensors', label: 'Sensors' },
   { to: '/settings', label: 'Settings' },
   { to: '/docs', label: 'API Docs' },

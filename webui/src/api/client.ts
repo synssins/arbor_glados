@@ -425,6 +425,129 @@ export const devices = {
     ),
 }
 
+// ── Robots ──
+
+export interface ActuatorMapping {
+  backend: 'arbor_servo' | 'klipper_stepper' | 'klipper_servo'
+  node_id?: string
+  servo_id?: number
+  klipper_name?: string
+  scale: number
+  offset: number
+}
+
+export interface JointConfig {
+  name: string
+  joint_type: 'revolute' | 'prismatic' | 'continuous' | 'wheel'
+  min_value?: number
+  max_value?: number
+  home_value: number
+  actuator: ActuatorMapping
+}
+
+export interface DHParameter {
+  d: number
+  a: number
+  alpha: number
+  theta_offset: number
+}
+
+export interface VehicleGeometry {
+  wheelbase: number
+  track_width: number
+  wheel_radius: number
+  max_steering_angle?: number
+  steering_axles: 'front' | 'rear' | 'both'
+}
+
+export interface RobotProfile {
+  id: string
+  name: string
+  robot_type: 'serial_arm' | 'scara' | 'differential' | 'ackermann' | 'mecanum'
+  joints: JointConfig[]
+  dh_parameters: DHParameter[]
+  vehicle_geometry?: VehicleGeometry
+  description: string
+}
+
+export interface CartesianPose {
+  x: number; y: number; z: number
+  roll: number; pitch: number; yaw: number
+}
+
+export interface VelocityCommand {
+  linear_x: number; linear_y: number; angular_z: number
+}
+
+export interface JointMoveCommand {
+  positions: Record<string, number>
+  speed?: number
+}
+
+export interface RobotState {
+  robot_id: string
+  joint_positions: Record<string, number>
+  end_effector_pose?: CartesianPose
+  timestamp: number
+}
+
+export interface MotionResult {
+  status: string
+  robot_id: string
+  results?: Record<string, { status: string; hw_value?: number; error?: string }>
+  errors?: string[]
+  solver?: string
+  message?: string
+}
+
+export const robots = {
+  create: (profile: RobotProfile) =>
+    request<{ status: string; robot_id: string }>('POST', '/robots', profile),
+  list: () =>
+    request<{ robots: RobotProfile[]; count: number }>('GET', '/robots'),
+  get: (id: string) =>
+    request<RobotProfile>('GET', `/robots/${id}`),
+  update: (id: string, profile: RobotProfile) =>
+    request<{ status: string; robot_id: string }>('PUT', `/robots/${id}`, profile),
+  delete: (id: string) =>
+    request<{ status: string; robot_id: string }>('DELETE', `/robots/${id}`),
+  moveJoints: (id: string, cmd: JointMoveCommand) =>
+    request<MotionResult>('POST', `/robots/${id}/joints`, cmd),
+  moveCartesian: (id: string, pose: CartesianPose) =>
+    request<MotionResult>('POST', `/robots/${id}/move`, pose),
+  drive: (id: string, cmd: VelocityCommand) =>
+    request<MotionResult>('POST', `/robots/${id}/drive`, cmd),
+  state: (id: string) =>
+    request<RobotState>('GET', `/robots/${id}/state`),
+  home: (id: string) =>
+    request<MotionResult>('POST', `/robots/${id}/home`),
+  stop: (id: string) =>
+    request<MotionResult>('POST', `/robots/${id}/stop`),
+}
+
+// ── Klipper ──
+
+export interface KlipperStatus {
+  result: {
+    state: string
+    state_message: string
+    hostname: string
+    software_version: string
+    cpu_info: string
+  }
+}
+
+export const klipper = {
+  gcode: (script: string) =>
+    request<{ status: string; result: unknown }>('POST', '/klipper/gcode', { script }),
+  status: () =>
+    request<KlipperStatus>('GET', '/klipper/status'),
+  objects: () =>
+    request<{ result: { objects: string[] } }>('GET', '/klipper/objects'),
+  queryObjects: (objects: Record<string, string[] | null>) =>
+    request<{ result: { status: Record<string, unknown> } }>('POST', '/klipper/objects/query', { objects }),
+}
+
 // ── Auth ──
 
 export const auth = {

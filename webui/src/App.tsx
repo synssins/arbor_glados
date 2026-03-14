@@ -3,6 +3,8 @@ import Layout from './components/Layout'
 import Dashboard from './views/Dashboard'
 import Nodes from './views/Nodes'
 import ServoControl from './views/ServoControl'
+import RobotControl from './views/RobotControl'
+import KlipperStatus from './views/KlipperStatus'
 import Sensors from './views/Sensors'
 import Settings from './views/Settings'
 import Login from './views/Login'
@@ -16,6 +18,8 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/nodes" element={<Nodes />} />
         <Route path="/servos" element={<ServoControl />} />
+        <Route path="/robots" element={<RobotControl />} />
+        <Route path="/klipper" element={<KlipperStatus />} />
         <Route path="/sensors" element={<Sensors />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/docs" element={<ApiDocs />} />

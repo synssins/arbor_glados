@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     - NodeBridge (transport connection manager)
     - NodeProxy (API forwarding layer)
     - Transport connections to pre-configured nodes
+    - RobotRegistry + KinematicsEngine + actuator backends
     """
     logger.info("arbor_starting", version=app.version)
 
@@ -70,6 +71,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             total=len(results),
             connected=connected,
             failed=len(results) - connected,
+        )
+
+    # 5. Initialize robotics control system
+    from arbor_core.robotics.backends.klipper_backend import KlipperBackend
+    from arbor_core.robotics.backends.servo_backend import ArborServoBackend
+    from arbor_core.robotics.engine import KinematicsEngine
+    from arbor_core.robotics.registry import RobotRegistry
+
+    robotics_cfg = getattr(config, "robotics", None)
+    robotics_enabled = robotics_cfg is None or robotics_cfg.enabled
+
+    if robotics_enabled:
+        registry = RobotRegistry()
+        app.state.robot_registry = registry
+
+        # Create actuator backends
+        backends: dict[str, ArborServoBackend | KlipperBackend] = {
+            "arbor_servo": ArborServoBackend(proxy=proxy),
+        }
+
+        # Create Klipper backend if Moonraker is configured
+        moonraker_cfg = getattr(robotics_cfg, "moonraker", None) if robotics_cfg else None
+        if moonraker_cfg is None or moonraker_cfg.enabled:
+            klipper = KlipperBackend(
+                host=getattr(moonraker_cfg, "host", "localhost"),
+                port=getattr(moonraker_cfg, "port", 7125),
+                timeout=getattr(moonraker_cfg, "timeout", 5.0),
+            )
+            backends["klipper"] = klipper
+            app.state.klipper_backend = klipper
+            logger.info(
+                "klipper_backend_created",
+                host=getattr(moonraker_cfg, "host", "localhost"),
+                port=getattr(moonraker_cfg, "port", 7125),
+            )
+
+        # Create kinematics engine
+        engine = KinematicsEngine(
+            registry=registry,
+            backends=backends,
+            event_bus=event_bus,
+        )
+        app.state.kinematics_engine = engine
+        logger.info(
+            "robotics_initialized",
+            backends=list(backends.keys()),
         )
 
     yield
