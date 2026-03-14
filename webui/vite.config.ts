@@ -18,7 +18,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../control-server/arbor/webui',
+    outDir: '../control-server/arbor_core/webui',
     emptyOutDir: true,
   },
 })

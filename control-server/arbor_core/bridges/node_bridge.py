@@ -116,6 +116,21 @@ class NodeBridge:
             raise TransportError(msg)
         return await transport.send_request(method, path, body)
 
+    async def unregister_node(self, node_id: str) -> None:
+        """
+        Unregister and disconnect a node's transport.
+
+        Args:
+            node_id: Node identifier to remove.
+        """
+        transport = self._nodes.pop(node_id, None)
+        if transport is not None:
+            try:
+                await transport.disconnect()
+            except Exception:
+                logger.exception("node_unregister_disconnect_error", node_id=node_id)
+            logger.info("node_unregistered", node_id=node_id)
+
     async def health_check_all(self) -> dict[str, bool]:
         """
         Run health checks on all nodes.

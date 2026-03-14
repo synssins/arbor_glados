@@ -269,6 +269,74 @@ export const modules = {
   list: () => request<{ modules: PluginInfo[]; count: number }>('GET', '/modules'),
 }
 
+// ── Nodes ──
+
+export interface NodeSummary {
+  id: string
+  type: string
+  transport: string
+  host?: string
+  port?: number
+  serial_port?: string
+  baud?: number
+  status: 'connected' | 'disconnected' | 'unknown'
+}
+
+export interface ProbeResult {
+  reachable: boolean
+  health?: { status: string }
+  health_error?: string
+  info?: {
+    platform: string
+    firmware_version?: string
+    arbor_version?: string
+    board_id?: string
+    ip_addr?: string
+    node_count?: number
+    loaded_plugins?: {
+      name: string
+      version: string
+      capabilities: string[]
+    }[]
+    plugins?: {
+      name: string
+      version: string
+      health: string
+      capabilities?: string[]
+    }[]
+  }
+  info_error?: string
+  config?: Record<string, unknown>
+  config_error?: string
+  servo_scan?: {
+    found_ids: number[]
+    count: number
+  }
+  servo_scan_error?: string
+}
+
+export interface NodeAddRequest {
+  id: string
+  type: string
+  transport: 'wifi' | 'uart' | 'usb' | 'ethernet'
+  transport_config: {
+    host?: string
+    network_port?: number
+    port?: string
+    baud?: number
+  }
+}
+
+export const nodes = {
+  list: () => request<{ nodes: NodeSummary[]; count: number }>('GET', '/nodes'),
+  probe: (params: { host: string; port: number; timeout_seconds?: number }) =>
+    request<ProbeResult>('POST', '/nodes/probe', params),
+  add: (node: NodeAddRequest) =>
+    request<{ ok: boolean; node_id: string; detail: string }>('POST', '/nodes', node),
+  remove: (id: string) =>
+    request<{ ok: boolean; detail: string }>('DELETE', `/nodes/${id}`),
+}
+
 // ── Auth ──
 
 export const auth = {

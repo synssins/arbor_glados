@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from arbor_core.api.v1.auth_routes import auth_router
 from arbor_core.api.v1.emergency_routes import emergency_router
+from arbor_core.api.v1.node_routes import node_router
 from arbor_core.api.v1.sensor_routes import sensor_router, sensors_router
 from arbor_core.api.v1.servo_routes import servo_router
 from arbor_core.api.v1.system_routes import system_router
@@ -17,6 +18,7 @@ from arbor_core.api.v1.ws_routes import ws_router
 router = APIRouter(tags=["v1"])
 router.include_router(auth_router)
 router.include_router(system_router)
+router.include_router(node_router)
 router.include_router(servo_router)
 router.include_router(sensor_router)
 router.include_router(sensors_router)
@@ -51,6 +53,7 @@ async def health_check() -> JSONResponse:
 
 # All route modules included:
 # - system_router (C10): /system/info, /system/health, /system/config
+# - node_router: /nodes (list, add, remove, probe)
 # - servo_router (C11): /servo/{id}/state, /servo/{id}/position, etc.
 # - sensor_router (C12): /sensor/{id}/reading, /sensor/{id}/history
 # - emergency_router (C13): /emergency-stop

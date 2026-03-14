@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './views/Dashboard'
+import Nodes from './views/Nodes'
 import ServoControl from './views/ServoControl'
 import Sensors from './views/Sensors'
 import Settings from './views/Settings'
@@ -13,6 +14,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/nodes" element={<Nodes />} />
         <Route path="/servos" element={<ServoControl />} />
         <Route path="/sensors" element={<Sensors />} />
         <Route path="/settings" element={<Settings />} />

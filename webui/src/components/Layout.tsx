@@ -14,10 +14,17 @@ import ConnectionStatus from './ConnectionStatus'
 
 const navItems = [
   { to: '/', label: 'Dashboard' },
+  { to: '/nodes', label: 'Nodes' },
   { to: '/servos', label: 'Servos' },
   { to: '/sensors', label: 'Sensors' },
   { to: '/settings', label: 'Settings' },
   { to: '/docs', label: 'API Docs' },
+]
+
+const externalLinks = [
+  { href: '/health', label: 'Health' },
+  { href: '/api/docs', label: 'Swagger' },
+  { href: '/moonraker/', label: 'Moonraker' },
 ]
 
 export default function Layout() {
@@ -81,6 +88,25 @@ export default function Layout() {
           {info?.firmware_version && (
             <span className="text-xs text-gray-400 font-mono">v{info.firmware_version}</span>
           )}
+
+          {/* External links divider */}
+          <div className="h-5 w-px bg-gray-200" />
+          <div className="flex gap-2">
+            {externalLinks.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-gray-400 hover:text-servo-600 transition-colors flex items-center gap-0.5"
+              >
+                {link.label}
+                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-4">
           <ConnectionStatus />
