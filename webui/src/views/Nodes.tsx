@@ -169,7 +169,7 @@ function AddNodeWizard({ step, setStep, probing, probeResult, probeError, onProb
 
     const ok = await onAdd(req)
     setAdding(false)
-    if (ok) setStep('done')
+    if (ok) onDone()
   }
 
   return (
