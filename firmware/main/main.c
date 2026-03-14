@@ -40,6 +40,7 @@
 #include "api_emergency.h"
 #include "api_ota.h"
 #include "api_led.h"
+#include "api_pwm_servo.h"
 #include "api_cors.h"
 #include "webui_server.h"
 #include "wifi_manager.h"
@@ -276,6 +277,7 @@ void app_main(void)
     sb_api_emergency_register(server);
     sb_api_ota_register(server);
     sb_api_led_register(server);
+    sb_api_pwm_servo_register(server);
 
     /* WebSocket */
     ret = sb_ws_init(server);

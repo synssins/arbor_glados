@@ -33,9 +33,10 @@ class RobotType(str, Enum):
 class ActuatorBackendType(str, Enum):
     """Supported actuator backend types."""
 
-    ARBOR_SERVO = "arbor_servo"         # Feetech STS/SCS via ESP32 node
-    KLIPPER_STEPPER = "klipper_stepper" # Klipper MANUAL_STEPPER via Moonraker
-    KLIPPER_SERVO = "klipper_servo"     # Klipper SET_SERVO via Moonraker
+    ARBOR_SERVO = "arbor_servo"             # Feetech STS/SCS via ESP32 node
+    ARBOR_PWM_SERVO = "arbor_pwm_servo"     # PWM servo via ESP32 LEDC or Klipper SET_SERVO
+    KLIPPER_STEPPER = "klipper_stepper"     # Klipper MANUAL_STEPPER via Moonraker
+    KLIPPER_SERVO = "klipper_servo"         # Klipper SET_SERVO via Moonraker
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,13 @@ class ActuatorMapping(BaseModel):
         ge=0,
         le=253,
         description="Servo bus ID for arbor_servo backend.",
+    )
+    # PWM servo fields
+    pwm_channel: int | None = Field(
+        default=None,
+        ge=0,
+        le=7,
+        description="PWM servo channel (0-7) for arbor_pwm_servo backend.",
     )
     # Klipper fields
     klipper_name: str | None = Field(

@@ -7,6 +7,7 @@ import RobotControl from './views/RobotControl'
 import KlipperStatus from './views/KlipperStatus'
 import Sensors from './views/Sensors'
 import Settings from './views/Settings'
+import ConfigBrowser from './views/ConfigBrowser'
 import Login from './views/Login'
 import ApiDocs from './views/ApiDocs'
 
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/klipper" element={<KlipperStatus />} />
         <Route path="/sensors" element={<Sensors />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/config" element={<ConfigBrowser />} />
         <Route path="/docs" element={<ApiDocs />} />
       </Route>
     </Routes>

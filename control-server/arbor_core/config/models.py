@@ -423,6 +423,105 @@ class RoboticsConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Board capabilities (pin classification per board)
+# ---------------------------------------------------------------------------
+class BoardCapabilities(BaseModel):
+    """GPIO pin capabilities for a specific board type."""
+
+    pwm_capable_pins: list[int] = Field(
+        default_factory=list,
+        description="GPIO pins that support hardware PWM output.",
+    )
+    input_only_pins: list[int] = Field(
+        default_factory=list,
+        description="GPIO pins that are input-only (e.g. ESP32 GPIO 34-39).",
+    )
+    reserved_pins: list[int] = Field(
+        default_factory=list,
+        description="GPIO pins reserved for flash/PSRAM (e.g. ESP32 GPIO 6-11).",
+    )
+
+
+# ---------------------------------------------------------------------------
+# PWM servo configuration
+# ---------------------------------------------------------------------------
+class PwmServoConfig(BaseModel):
+    """Configuration for a manually-added PWM servo."""
+
+    channel: int = Field(ge=0, le=7, description="PWM channel (0-7).")
+    name: str = Field(
+        min_length=1,
+        max_length=64,
+        description="Human-readable servo name.",
+    )
+    pin: int = Field(ge=0, le=39, description="GPIO pin number.")
+    node_id: str | None = Field(
+        default=None,
+        description="ESP32 node ID. None = Klipper servo.",
+    )
+    controller_type: Literal["esp32", "klipper"] = Field(
+        default="esp32",
+        description="Which controller drives this servo.",
+    )
+    klipper_name: str | None = Field(
+        default=None,
+        description="Klipper servo name for SET_SERVO command.",
+    )
+    min_pulse_us: int = Field(
+        default=500, ge=100, le=3000,
+        description="Minimum pulse width in microseconds.",
+    )
+    max_pulse_us: int = Field(
+        default=2500, ge=100, le=3000,
+        description="Maximum pulse width in microseconds.",
+    )
+    invert: bool = Field(default=False, description="Invert servo direction.")
+    pull_up: bool = Field(default=False, description="Enable internal pull-up resistor.")
+    pull_down: bool = Field(default=False, description="Enable internal pull-down resistor.")
+
+
+# ---------------------------------------------------------------------------
+# File root configuration (config browser)
+# ---------------------------------------------------------------------------
+class FileRootConfig(BaseModel):
+    """Configuration for a browsable file root in the config editor."""
+
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        description="Unique root identifier slug.",
+    )
+    label: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Display label for this root.",
+    )
+    base_path: str = Field(
+        description="Base filesystem path for this root.",
+    )
+    source: Literal["filesystem", "moonraker"] = Field(
+        description="File access method: direct filesystem or via Moonraker API.",
+    )
+    readonly: bool = Field(
+        default=False,
+        description="Prevent writes to this root.",
+    )
+    restart_command: str | None = Field(
+        default=None,
+        description="Command to restart the associated service after save.",
+    )
+    allowed_extensions: list[str] = Field(
+        default_factory=lambda: [".cfg", ".yaml", ".yml", ".conf", ".json", ".txt", ".md"],
+        description="File extensions allowed for editing.",
+    )
+    max_file_size: int = Field(
+        default=1048576,
+        ge=1024,
+        description="Maximum file size in bytes for read/write.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Root config
 # ---------------------------------------------------------------------------
 class ArborConfig(BaseModel):
@@ -471,6 +570,14 @@ class ArborConfig(BaseModel):
     robotics: RoboticsConfig = Field(
         default_factory=RoboticsConfig,
         description="Robotics control system settings.",
+    )
+    board_profiles: dict[str, BoardCapabilities] = Field(
+        default_factory=dict,
+        description="Board GPIO profiles keyed by board type slug.",
+    )
+    file_roots: list[FileRootConfig] = Field(
+        default_factory=list,
+        description="Browsable file roots for the config editor.",
     )
 
     Annotated  # noqa: B018 — keeps import alive for future validators

@@ -85,6 +85,7 @@ class KinematicsEngine:
         # Map enum values to backend dict keys
         key_map = {
             ActuatorBackendType.ARBOR_SERVO: "arbor_servo",
+            ActuatorBackendType.ARBOR_PWM_SERVO: "arbor_servo",
             ActuatorBackendType.KLIPPER_STEPPER: "klipper",
             ActuatorBackendType.KLIPPER_SERVO: "klipper",
         }
@@ -517,10 +518,13 @@ class KinematicsEngine:
         Build the backend-specific actuator identifier for a joint.
 
         For arbor_servo: "node_id:servo_id"
+        For arbor_pwm_servo: "node_id:pwm:channel"
         For klipper_stepper/klipper_servo: klipper_name
         """
         actuator = joint_cfg.actuator
         if actuator.backend == ActuatorBackendType.ARBOR_SERVO:
             return f"{actuator.node_id}:{actuator.servo_id}"
+        elif actuator.backend == ActuatorBackendType.ARBOR_PWM_SERVO:
+            return f"{actuator.node_id}:pwm:{actuator.pwm_channel}"
         else:
             return actuator.klipper_name or ""

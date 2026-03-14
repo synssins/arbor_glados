@@ -49,6 +49,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.node_bridge = bridge
     app.state.node_proxy = proxy
 
+    # Initialize PWM servo config store (in-memory for Phase 1)
+    app.state.pwm_servo_configs = []
+
     # 3. Create transports for pre-configured nodes
     config = getattr(app.state, "config", None)
     if config is not None and hasattr(config, "nodes"):

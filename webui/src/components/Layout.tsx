@@ -20,6 +20,7 @@ const navItems = [
   { to: '/klipper', label: 'Klipper' },
   { to: '/sensors', label: 'Sensors' },
   { to: '/settings', label: 'Settings' },
+  { to: '/config', label: 'Config' },
   { to: '/docs', label: 'API Docs' },
 ]
 

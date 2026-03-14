@@ -7,6 +7,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useServoStore } from '../stores/servo'
 import { servo } from '../api/client'
+import { usePwmServoStore } from '../stores/pwmServo'
+import PwmServoCard from '../components/PwmServoCard'
+import AddPwmServoDialog from '../components/AddPwmServoDialog'
 
 // ── 16-bit LE helpers ──
 
@@ -934,12 +937,19 @@ export default function ServoControl() {
   const scan = useServoStore((s) => s.scan)
   const error = useServoStore((s) => s.error)
   const [manualId, setManualId] = useState('')
+  const pwmServos = usePwmServoStore((s) => s.servos)
+  const pwmLoading = usePwmServoStore((s) => s.loading)
+  const fetchPwmServos = usePwmServoStore((s) => s.fetchServos)
+  const fetchBoardProfiles = usePwmServoStore((s) => s.fetchBoardProfiles)
+  const [showAddPwm, setShowAddPwm] = useState(false)
 
   // Auto-scan on mount if no servos found yet
   useEffect(() => {
     if (scannedIds.length === 0 && !scanning) {
       scan()
     }
+    fetchPwmServos()
+    fetchBoardProfiles()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddManual = useCallback(() => {
@@ -1012,6 +1022,40 @@ export default function ServoControl() {
           <ServoCard key={id} id={id} />
         ))}
       </div>
+
+      {/* ── PWM Servos ── */}
+      <div className="mt-8 pt-6 border-t border-gray-200">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-bold">PWM Servos</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Manually configured PWM servos · LEDC 50Hz · 14-bit
+            </p>
+          </div>
+          <button onClick={() => setShowAddPwm(true)} className="btn-primary">
+            Add PWM Servo
+          </button>
+        </div>
+
+        {pwmServos.length === 0 && !pwmLoading && (
+          <div className="text-center text-gray-500 py-8 bg-gray-50 rounded-lg">
+            No PWM servos configured. Click &quot;Add PWM Servo&quot; to add one.
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {pwmServos.map((srv) => (
+            <PwmServoCard key={srv.channel} servo={srv} />
+          ))}
+        </div>
+      </div>
+
+      {/* Add PWM Servo Dialog */}
+      <AddPwmServoDialog
+        open={showAddPwm}
+        onClose={() => setShowAddPwm(false)}
+        nodeIds={[]}
+      />
     </div>
   )
 }

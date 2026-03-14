@@ -108,6 +108,23 @@ async def list_devices(request: Request) -> JSONResponse:
                     "status": "connected",
                 })
 
+    # Include PWM servos from config
+    pwm_configs = getattr(request.app.state, "pwm_servo_configs", [])
+    for pwm in pwm_configs:
+        name_key = f"pwm/{pwm.get('channel', 0)}"
+        friendly_name = device_names.get(
+            name_key, pwm.get("name", f"PWM {pwm.get('channel', 0)}")
+        )
+        devices.append({
+            "type": "pwm_servo",
+            "id": pwm.get("channel", 0),
+            "node_id": pwm.get("node_id", "klipper"),
+            "name": friendly_name,
+            "status": "configured",
+            "controller_type": pwm.get("controller_type", "esp32"),
+            "pin": pwm.get("pin"),
+        })
+
     return JSONResponse(content={"devices": devices, "count": len(devices)})
 
 

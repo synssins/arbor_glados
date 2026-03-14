@@ -548,6 +548,91 @@ export const klipper = {
     request<{ result: { status: Record<string, unknown> } }>('POST', '/klipper/objects/query', { objects }),
 }
 
+// ── PWM Servo ──
+
+export interface PwmServoConfig {
+  channel: number
+  name: string
+  pin: number
+  node_id: string | null
+  controller_type: 'esp32' | 'klipper'
+  klipper_name: string | null
+  min_pulse_us: number
+  max_pulse_us: number
+  invert: boolean
+  pull_up: boolean
+  pull_down: boolean
+}
+
+export interface BoardProfile {
+  pwm_capable_pins: number[]
+  input_only_pins: number[]
+  reserved_pins: number[]
+}
+
+export const pwmServo = {
+  list: () => request<{ servos: PwmServoConfig[]; count: number }>('GET', '/pwm-servo'),
+  add: (config: Partial<PwmServoConfig>) =>
+    request<{ ok: boolean; servo: PwmServoConfig }>('POST', '/pwm-servo', config),
+  state: (channel: number) =>
+    request<Record<string, unknown>>('GET', `/pwm-servo/${channel}/state`),
+  setPosition: (channel: number, position: number) =>
+    request<{ ok: boolean; position: number }>('PUT', `/pwm-servo/${channel}/position`, { position }),
+  updateConfig: (channel: number, config: Partial<PwmServoConfig>) =>
+    request<{ ok: boolean; servo: PwmServoConfig }>('PUT', `/pwm-servo/${channel}/config`, config),
+  remove: (channel: number) =>
+    request<{ ok: boolean; channel: number }>('DELETE', `/pwm-servo/${channel}`),
+  boardProfiles: () =>
+    request<{ profiles: Record<string, BoardProfile> }>('GET', '/pwm-servo/board-profiles'),
+  boardProfile: (boardType: string) =>
+    request<BoardProfile>('GET', `/pwm-servo/board-profiles/${boardType}`),
+}
+
+// ── Files (Config Browser) ──
+
+export interface FileRoot {
+  id: string
+  label: string
+  source: 'filesystem' | 'moonraker'
+  readonly: boolean
+  has_restart: boolean
+}
+
+export interface FileItem {
+  name: string
+  type: 'file' | 'directory'
+  size: number
+  modified?: number
+}
+
+export interface FileContent {
+  path: string
+  content: string
+  size: number
+  readonly: boolean
+}
+
+export const files = {
+  roots: () =>
+    request<{ roots: FileRoot[]; count: number }>('GET', '/files/roots'),
+  list: (rootId: string, path?: string) =>
+    request<{ path: string; items: FileItem[]; count: number }>(
+      'GET', `/files/${rootId}/list${path ? `?path=${encodeURIComponent(path)}` : ''}`
+    ),
+  read: (rootId: string, path: string) =>
+    request<FileContent>('GET', `/files/${rootId}/read?path=${encodeURIComponent(path)}`),
+  write: (rootId: string, path: string, content: string) =>
+    request<{ ok: boolean; path: string; size: number }>(
+      'PUT', `/files/${rootId}/write`, { path, content }
+    ),
+  delete: (rootId: string, path: string) =>
+    request<{ ok: boolean; path: string }>(
+      'DELETE', `/files/${rootId}/delete?path=${encodeURIComponent(path)}`
+    ),
+  restart: (rootId: string) =>
+    request<{ ok: boolean; command: string }>('POST', `/files/${rootId}/restart`),
+}
+
 // ── Auth ──
 
 export const auth = {

@@ -17,6 +17,7 @@ idf_component_register(
         "api_emergency.c"
         "api_ota.c"
         "api_led.c"
+        "api_pwm_servo.c"
         "api_cors.c"
         "event_bus.c"
         "json_util.c"
