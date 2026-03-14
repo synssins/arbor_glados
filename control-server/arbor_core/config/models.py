@@ -120,6 +120,14 @@ class LoggingConfig(BaseModel):
         default="INFO",
         description="Minimum log level.",
     )
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def normalize_level(cls, v: str) -> str:
+        """Accept case-insensitive log levels."""
+        if isinstance(v, str):
+            return v.upper()
+        return v
     format: Literal["json", "console"] = Field(
         default="json",
         description="Log output format. 'json' for production, 'console' for development.",
