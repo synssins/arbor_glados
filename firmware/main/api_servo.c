@@ -10,6 +10,7 @@
 
 #include "api_servo.h"
 #include "api_auth.h"
+#include "api_cors.h"
 #include "json_util.h"
 #include "plugin_manager.h"
 
@@ -368,6 +369,7 @@ static esp_err_t handle_servo_restore(httpd_req_t *req, int servo_id)
 /* GET /api/v1/servo/scan */
 static esp_err_t handle_servo_scan(httpd_req_t *req)
 {
+    sb_cors_set_headers(req);
     sb_auth_result_t auth;
     sb_auth_check(req, &auth);
     if (!sb_auth_has_scope(&auth, SB_SCOPE_READ)) {

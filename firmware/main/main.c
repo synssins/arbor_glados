@@ -40,6 +40,7 @@
 #include "api_emergency.h"
 #include "api_ota.h"
 #include "api_led.h"
+#include "api_cors.h"
 #include "webui_server.h"
 #include "wifi_manager.h"
 #include "oled_display.h"
@@ -264,6 +265,9 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Auth init failed — running without auth");
     }
+
+    /* CORS — must be before API routes for OPTIONS preflight */
+    sb_cors_register(server);
 
     /* API routes */
     sb_api_system_register(server);

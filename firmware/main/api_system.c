@@ -10,6 +10,7 @@
 
 #include "api_system.h"
 #include "api_auth.h"
+#include "api_cors.h"
 #include "json_util.h"
 #include "plugin_manager.h"
 #include "app_config.h"
@@ -37,6 +38,7 @@ static const char *TAG = "sb_api_sys";
 /* GET /api/v1/system/info */
 static esp_err_t handle_info(httpd_req_t *req)
 {
+    sb_cors_set_headers(req);
     cJSON *resp = cJSON_CreateObject();
     if (resp == NULL) {
         return sb_json_error(req, "500 Internal Server Error", "OOM");
@@ -91,6 +93,7 @@ static esp_err_t handle_info(httpd_req_t *req)
 /* GET /api/v1/system/health */
 static esp_err_t handle_health(httpd_req_t *req)
 {
+    sb_cors_set_headers(req);
     cJSON *resp = cJSON_CreateObject();
     if (resp == NULL) {
         return sb_json_error(req, "500 Internal Server Error", "OOM");
@@ -136,6 +139,7 @@ static esp_err_t handle_health(httpd_req_t *req)
 /* GET /api/v1/system/config */
 static esp_err_t handle_config_get(httpd_req_t *req)
 {
+    sb_cors_set_headers(req);
     sb_auth_result_t auth;
     sb_auth_check(req, &auth);
     if (!sb_auth_has_scope(&auth, SB_SCOPE_READ)) {

@@ -327,10 +327,78 @@ export interface NodeAddRequest {
   }
 }
 
+/**
+ * Probe a node directly from the browser (cross-origin fetch).
+ * Requires the target node to have CORS headers (firmware v0.2.8+).
+ * Falls back to server-side probe if CORS is unavailable.
+ */
+async function probeNodeDirect(host: string, port: number): Promise<ProbeResult> {
+  const base = `http://${host}${port === 80 ? '' : `:${port}`}`
+  const timeout = 8000
+  const result: ProbeResult = { reachable: false }
+
+  async function tryFetch(url: string): Promise<Record<string, unknown> | null> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+    try {
+      const res = await fetch(url, {
+        mode: 'cors',
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      })
+      if (res.ok) return (await res.json()) as Record<string, unknown>
+      return null
+    } catch {
+      return null
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  // Step 1: Health check
+  const health = await tryFetch(`${base}/api/v1/health`)
+  if (!health) {
+    result.health_error = 'Unreachable or no CORS headers (firmware update needed?)'
+    return result
+  }
+  result.reachable = true
+  result.health = health as ProbeResult['health']
+
+  // Step 2: System info
+  const info = await tryFetch(`${base}/api/v1/system/info`)
+  if (info) result.info = info as ProbeResult['info']
+  else result.info_error = 'Failed to fetch system info'
+
+  // Step 3: System config
+  const config = await tryFetch(`${base}/api/v1/system/config`)
+  if (config) result.config = config as ProbeResult['config']
+  else result.config_error = 'Failed to fetch config'
+
+  // Step 4: Servo scan
+  const scan = await tryFetch(`${base}/api/v1/servo/scan`)
+  if (scan) result.servo_scan = scan as ProbeResult['servo_scan']
+  else result.servo_scan_error = 'Failed to scan servos'
+
+  return result
+}
+
 export const nodes = {
   list: () => request<{ nodes: NodeSummary[]; count: number }>('GET', '/nodes'),
-  probe: (params: { host: string; port: number; timeout_seconds?: number }) =>
-    request<ProbeResult>('POST', '/nodes/probe', params),
+  /** Probe directly from browser (preferred) with server-side fallback */
+  probe: async (params: { host: string; port: number; timeout_seconds?: number }): Promise<ProbeResult> => {
+    // Try browser-direct first (works when node has CORS headers)
+    const direct = await probeNodeDirect(params.host, params.port)
+    if (direct.reachable) return direct
+
+    // Fallback to server-side probe (works when server can reach the node)
+    try {
+      return await request<ProbeResult>('POST', '/nodes/probe', params)
+    } catch {
+      // If server-side also fails, return the direct probe result
+      // (which has a more useful error message)
+      return direct
+    }
+  },
   add: (node: NodeAddRequest) =>
     request<{ ok: boolean; node_id: string; detail: string }>('POST', '/nodes', node),
   remove: (id: string) =>
