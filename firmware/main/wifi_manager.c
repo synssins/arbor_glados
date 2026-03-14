@@ -216,6 +216,11 @@ esp_err_t sb_wifi_init(const sb_wifi_config_t *wifi_cfg)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    /* We manage WiFi config ourselves (in our NVS namespace).
+     * Tell ESP-IDF NOT to persist its own WiFi config — prevents
+     * conflicts with stale data after full-flash or NVS migration. */
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+
     /* Register event handlers */
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
