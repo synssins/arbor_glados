@@ -67,8 +67,13 @@ def create_app(config: "ArborConfig | None" = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Store config in app state for access by routes
-    # Config loading will be implemented in C02/C03
+    # Store config in app state for access by routes.
+    # If no config is provided, create a default so that in-memory
+    # operations (node add/remove) work immediately.
+    if config is None:
+        from arbor_core.config.models import ArborConfig
+
+        config = ArborConfig()
     app.state.config = config
 
     # Configure CORS - origins will come from config (C02/C03)

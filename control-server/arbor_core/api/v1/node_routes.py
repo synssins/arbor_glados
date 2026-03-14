@@ -111,7 +111,11 @@ async def add_node(request: Request) -> JSONResponse:
     if config is not None and hasattr(config, "nodes"):
         config.nodes.append(node_cfg)
     else:
-        logger.warning("no_config_loaded_cannot_persist_node")
+        logger.error("no_config_loaded_cannot_persist_node")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Server configuration not loaded — cannot persist node"},
+        )
 
     logger.info("node_added", node_id=node_id, transport=node_cfg.transport)
 
