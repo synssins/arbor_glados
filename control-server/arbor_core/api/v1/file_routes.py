@@ -208,8 +208,11 @@ async def _list_moonraker(root: dict[str, Any], rel_path: str, request: Request)
     port = moonraker_cfg.get("port", 7125)
 
     # Moonraker API: GET /server/files/directory?path={path}&root=config
-    query_path = rel_path if rel_path else ""
-    api_path = f"/server/files/directory?path={quote(query_path)}&root=config"
+    # When rel_path is empty (root listing), omit the path param
+    if rel_path:
+        api_path = f"/server/files/directory?path={quote(rel_path)}&root=config"
+    else:
+        api_path = "/server/files/directory?root=config"
 
     status, body = await _async_moonraker("GET", api_path, host, port)
     if status >= 400:
