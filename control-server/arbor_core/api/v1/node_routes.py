@@ -45,22 +45,22 @@ async def list_nodes(request: Request) -> JSONResponse:
             if transport is not None:
                 status = "connected" if transport.is_connected else "disconnected"
 
-        tc = node_cfg.transport_config or {}
+        tc = node_cfg.transport_config
         entry: dict[str, Any] = {
             "id": node_cfg.id,
             "type": node_cfg.type,
             "transport": node_cfg.transport,
             "status": status,
         }
-        # Include connection details
-        if "host" in tc:
-            entry["host"] = tc["host"]
-        if "network_port" in tc:
-            entry["port"] = tc["network_port"]
-        if "port" in tc:
-            entry["serial_port"] = tc["port"]
-        if "baud" in tc:
-            entry["baud"] = tc["baud"]
+        # Include connection details from TransportConfig model
+        if tc.host:
+            entry["host"] = tc.host
+        if tc.network_port:
+            entry["port"] = tc.network_port
+        if tc.port:
+            entry["serial_port"] = tc.port
+        if tc.port and tc.baud:
+            entry["baud"] = tc.baud
 
         nodes.append(entry)
 
@@ -119,9 +119,43 @@ async def add_node(request: Request) -> JSONResponse:
 
     logger.info("node_added", node_id=node_id, transport=node_cfg.transport)
 
+    # Auto-connect: create transport and register with bridge
+    bridge = getattr(request.app.state, "node_bridge", None)
+    transport_status = "no_bridge"
+    if bridge is not None:
+        from arbor_core.bridges.factory import create_transport
+        from arbor_core.bridges.transport import TransportError
+
+        transport = create_transport(node_cfg)
+        if transport is not None:
+            try:
+                bridge.register_node(node_cfg.id, transport)
+                await transport.connect()
+                transport_status = "connected"
+                logger.info("node_auto_connected", node_id=node_id)
+            except TransportError as exc:
+                transport_status = "connect_failed"
+                logger.warning(
+                    "node_added_but_connect_failed",
+                    node_id=node_id,
+                    error=str(exc),
+                )
+            except Exception as exc:
+                transport_status = "error"
+                logger.exception(
+                    "node_auto_connect_error", node_id=node_id, error=str(exc)
+                )
+        else:
+            transport_status = "unsupported_transport"
+
     return JSONResponse(
         status_code=201,
-        content={"ok": True, "node_id": node_id, "detail": "Node registered"},
+        content={
+            "ok": True,
+            "node_id": node_id,
+            "detail": "Node registered",
+            "transport_status": transport_status,
+        },
     )
 
 

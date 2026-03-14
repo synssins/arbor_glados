@@ -14,6 +14,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from arbor_core.api.v1.router import router as api_v1_router
+from arbor_core.bridges.factory import create_transport
+from arbor_core.bridges.node_bridge import NodeBridge
+from arbor_core.bridges.proxy import NodeProxy
+from arbor_core.events import EventBus
 
 if TYPE_CHECKING:
     from arbor_core.config.models import ArborConfig
@@ -27,22 +31,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Application lifespan context manager.
 
     Handles startup and shutdown of:
-    - Plugin manager
-    - Node connections
-    - Background tasks
+    - EventBus (in-process pub/sub)
+    - NodeBridge (transport connection manager)
+    - NodeProxy (API forwarding layer)
+    - Transport connections to pre-configured nodes
     """
     logger.info("arbor_starting", version=app.version)
 
-    # Startup tasks will be added here as we implement:
-    # - Plugin manager initialization (C04)
-    # - Node bridge connections (C08)
-    # - Database connections (C16)
+    # 1. Create shared infrastructure
+    event_bus = EventBus()
+    bridge = NodeBridge()
+    proxy = NodeProxy(bridge=bridge, event_bus=event_bus)
+
+    # 2. Store on app.state for route access
+    app.state.event_bus = event_bus
+    app.state.node_bridge = bridge
+    app.state.node_proxy = proxy
+
+    # 3. Create transports for pre-configured nodes
+    config = getattr(app.state, "config", None)
+    if config is not None and hasattr(config, "nodes"):
+        for node_cfg in config.nodes:
+            transport = create_transport(node_cfg)
+            if transport is not None:
+                try:
+                    bridge.register_node(node_cfg.id, transport)
+                except Exception:
+                    logger.exception(
+                        "node_register_failed_at_startup", node_id=node_cfg.id
+                    )
+
+    # 4. Connect all registered transports (non-blocking, logs failures)
+    if bridge.node_ids:
+        results = await bridge.connect_all()
+        connected = sum(1 for v in results.values() if v)
+        logger.info(
+            "nodes_connected_at_startup",
+            total=len(results),
+            connected=connected,
+            failed=len(results) - connected,
+        )
 
     yield
 
-    # Shutdown tasks
+    # Shutdown: disconnect all node transports
     logger.info("arbor_shutting_down")
-    # Plugin shutdown, connection cleanup, etc.
+    await bridge.disconnect_all()
 
 
 def create_app(config: "ArborConfig | None" = None) -> FastAPI:
