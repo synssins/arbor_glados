@@ -163,10 +163,17 @@ export const useRobotStore = create<RobotStore>((set, get) => ({
     try {
       const result = await klipper.gcode(script)
       set({ error: null })
-      return JSON.stringify(result)
+      // If Klipper returned an error in the response body
+      if (result.status === 'error') {
+        const errMsg = (result as any).error || 'Unknown Klipper error'
+        set({ error: errMsg })
+        return errMsg
+      }
+      return JSON.stringify(result.result ?? result)
     } catch (e) {
-      set({ error: (e as Error).message })
-      return null
+      const msg = (e as Error).message || 'Request failed'
+      set({ error: msg })
+      return `Error: ${msg}`
     }
   },
 }))

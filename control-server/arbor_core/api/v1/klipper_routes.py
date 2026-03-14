@@ -64,7 +64,8 @@ async def send_gcode(cmd: GcodeRequest, request: Request):
     try:
         result = await klipper.send_gcode(cmd.script)
     except KlipperError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        # Return error as a normal response so the console can display it
+        return {"status": "error", "error": str(exc)}
     return {"status": "ok", "result": result}
 
 

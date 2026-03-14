@@ -86,9 +86,28 @@ class KlipperBackend:
             resp_body = resp.read().decode("utf-8", errors="replace")
 
             if resp.status >= 400:
+                # Try to extract Klipper's actual error message
+                detail = resp_body[:500]
+                try:
+                    err_data = json.loads(resp_body)
+                    if isinstance(err_data, dict):
+                        # Moonraker error format: {"error": {"message": "..."}}
+                        if "error" in err_data:
+                            err_obj = err_data["error"]
+                            if isinstance(err_obj, dict) and "message" in err_obj:
+                                detail = err_obj["message"]
+                            elif isinstance(err_obj, str):
+                                detail = err_obj
+                        # Alternative format: {"result": "..."}
+                        elif "result" in err_data:
+                            detail = str(err_data["result"])
+                        # Alternative format: {"message": "..."}
+                        elif "message" in err_data:
+                            detail = err_data["message"]
+                except (json.JSONDecodeError, KeyError):
+                    pass
                 msg = (
-                    f"Moonraker HTTP {resp.status} "
-                    f"({method} {path}): {resp_body[:300]}"
+                    f"Klipper error ({method} {path}): {detail}"
                 )
                 raise KlipperError(msg)
 
