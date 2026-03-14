@@ -405,6 +405,26 @@ export const nodes = {
     request<{ ok: boolean; detail: string }>('DELETE', `/nodes/${id}`),
 }
 
+// ── Devices (aggregated across all nodes) ──
+
+export interface DeviceEntry {
+  type: 'servo' | 'sensor' | 'led'
+  id: number | string
+  node_id: string
+  name: string
+  status: 'connected' | 'disconnected' | 'unknown'
+}
+
+export const devices = {
+  list: () => request<{ devices: DeviceEntry[]; count: number }>('GET', '/devices'),
+  rename: (nodeId: string, type: string, deviceId: string | number, name: string) =>
+    request<{ ok: boolean; key: string; name: string }>(
+      'PUT',
+      `/devices/${nodeId}/${type}/${deviceId}/name`,
+      { name },
+    ),
+}
+
 // ── Auth ──
 
 export const auth = {
