@@ -36,6 +36,8 @@ esp_err_t sb_http_server_start(const sb_server_config_t *config)
     httpd_config.server_port = config->port;
     httpd_config.max_uri_handlers = 48;
     httpd_config.max_resp_headers = 8;
+    httpd_config.max_open_sockets = 13;      /* default 7 — too few for WebSocket + browser tabs + API probes */
+    httpd_config.lru_purge_enable = true;     /* close oldest idle socket when full instead of rejecting */
     httpd_config.stack_size = 8192;
     httpd_config.uri_match_fn = httpd_uri_match_wildcard;
 

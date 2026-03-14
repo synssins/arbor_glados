@@ -10,6 +10,6 @@
 
 #define SB_VERSION_MAJOR 0
 #define SB_VERSION_MINOR 3
-#define SB_VERSION_PATCH 3
+#define SB_VERSION_PATCH 4
 
-#define SB_VERSION "0.3.3"
+#define SB_VERSION "0.3.4"
