@@ -152,12 +152,17 @@ def create_app(config: "ArborConfig | None" = None) -> FastAPI:
     )
 
     # Store config in app state for access by routes.
-    # If no config is provided, create a default so that in-memory
-    # operations (node add/remove) work immediately.
+    # If no config is provided, load from YAML / env vars / defaults.
     if config is None:
-        from arbor_core.config.models import ArborConfig
+        from arbor_core.config.loader import ConfigError, load_config
 
-        config = ArborConfig()
+        try:
+            config = load_config()
+        except ConfigError:
+            logger.exception("config_load_failed_using_defaults")
+            from arbor_core.config.models import ArborConfig
+
+            config = ArborConfig()
     app.state.config = config
 
     # Configure CORS - origins will come from config (C02/C03)
