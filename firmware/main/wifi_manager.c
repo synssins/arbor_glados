@@ -254,14 +254,32 @@ esp_err_t sb_wifi_scan(sb_wifi_scan_entry_t *results, uint16_t *count)
     };
 
     /* Scanning requires STA or APSTA mode.  If we're pure-AP, switch to
-     * APSTA temporarily so the scan can proceed, then switch back. */
+     * APSTA temporarily so the scan can proceed, then switch back.
+     * ESP-IDF v5.x requires a STA netif to exist for scanning. */
     wifi_mode_t cur_mode;
     esp_wifi_get_mode(&cur_mode);
     bool switched = false;
+    bool created_sta_netif = false;
+
     if (cur_mode == WIFI_MODE_AP) {
+        /* Create a temporary STA netif if one doesn't exist yet —
+         * esp_wifi_scan_start() needs a STA interface. */
+        if (s_sta_netif == NULL) {
+            s_sta_netif = esp_netif_create_default_wifi_sta();
+            if (s_sta_netif == NULL) {
+                ESP_LOGE(TAG, "Failed to create STA netif for scan");
+                return ESP_FAIL;
+            }
+            created_sta_netif = true;
+        }
+
         esp_err_t sw = esp_wifi_set_mode(WIFI_MODE_APSTA);
         if (sw != ESP_OK) {
             ESP_LOGE(TAG, "Failed to switch to APSTA for scan: %s", esp_err_to_name(sw));
+            if (created_sta_netif) {
+                esp_netif_destroy(s_sta_netif);
+                s_sta_netif = NULL;
+            }
             return sw;
         }
         switched = true;
@@ -271,6 +289,10 @@ esp_err_t sb_wifi_scan(sb_wifi_scan_entry_t *results, uint16_t *count)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(ret));
         if (switched) esp_wifi_set_mode(WIFI_MODE_AP);
+        if (created_sta_netif) {
+            esp_netif_destroy(s_sta_netif);
+            s_sta_netif = NULL;
+        }
         return ret;
     }
 
@@ -278,6 +300,11 @@ esp_err_t sb_wifi_scan(sb_wifi_scan_entry_t *results, uint16_t *count)
     esp_wifi_scan_get_ap_num(&ap_count);
     if (ap_count == 0) {
         *count = 0;
+        if (switched) esp_wifi_set_mode(WIFI_MODE_AP);
+        if (created_sta_netif) {
+            esp_netif_destroy(s_sta_netif);
+            s_sta_netif = NULL;
+        }
         return ESP_OK;
     }
 
@@ -286,12 +313,22 @@ esp_err_t sb_wifi_scan(sb_wifi_scan_entry_t *results, uint16_t *count)
 
     wifi_ap_record_t *ap_records = calloc(ap_count, sizeof(wifi_ap_record_t));
     if (ap_records == NULL) {
+        if (switched) esp_wifi_set_mode(WIFI_MODE_AP);
+        if (created_sta_netif) {
+            esp_netif_destroy(s_sta_netif);
+            s_sta_netif = NULL;
+        }
         return ESP_ERR_NO_MEM;
     }
 
     ret = esp_wifi_scan_get_ap_records(&ap_count, ap_records);
     if (ret != ESP_OK) {
         free(ap_records);
+        if (switched) esp_wifi_set_mode(WIFI_MODE_AP);
+        if (created_sta_netif) {
+            esp_netif_destroy(s_sta_netif);
+            s_sta_netif = NULL;
+        }
         return ret;
     }
 
@@ -308,6 +345,10 @@ esp_err_t sb_wifi_scan(sb_wifi_scan_entry_t *results, uint16_t *count)
     /* Restore AP-only mode if we switched */
     if (switched) {
         esp_wifi_set_mode(WIFI_MODE_AP);
+    }
+    if (created_sta_netif) {
+        esp_netif_destroy(s_sta_netif);
+        s_sta_netif = NULL;
     }
 
     ESP_LOGI(TAG, "Scan complete: %d networks found", ap_count);
