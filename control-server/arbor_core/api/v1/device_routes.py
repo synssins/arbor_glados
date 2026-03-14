@@ -88,11 +88,10 @@ async def list_devices(request: Request) -> JSONResponse:
             continue
 
         # Parse servo scan results
-        # ESP32 returns {"servos": [{"id": 1}, {"id": 2}]} or similar
-        servo_list = scan_result.get("servos", [])
-        if isinstance(servo_list, list):
-            for servo in servo_list:
-                servo_id = servo.get("id") if isinstance(servo, dict) else servo
+        # ESP32 returns {"found_ids": [1, 2], "count": 2}
+        servo_ids = scan_result.get("found_ids", [])
+        if isinstance(servo_ids, list):
+            for servo_id in servo_ids:
                 if servo_id is None:
                     continue
 
