@@ -77,7 +77,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     """
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         msg = f"Cannot read config file: {path}: {exc}"
         raise ConfigError(msg) from exc
 
