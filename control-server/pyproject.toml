@@ -37,7 +37,6 @@ dependencies = [
     "argon2-cffi>=23.1.0",         # Argon2id hashing for API keys (DECISION_REQUEST_1)
     "PyJWT>=2.8.0",                # JWT RS256 tokens (DECISION_REQUEST_1)
     "cryptography>=42.0.0",        # RSA key ops for JWT RS256 (DECISION_REQUEST_1)
-    "httpx>=0.26.0",               # Async HTTP client for node probing
 ]
 
 [project.optional-dependencies]

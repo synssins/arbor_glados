@@ -151,6 +151,27 @@ async def remove_node(node_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True, "detail": f"Node '{node_id}' removed"})
 
 
+def _sync_get(host: str, port: int, path: str, timeout: float) -> tuple[int, str]:
+    """
+    Minimal HTTP GET using stdlib http.client.
+
+    httpx/httpcore sends headers (Accept-Encoding, chunked TE, etc.) that
+    ESP-IDF's lightweight httpd cannot parse, causing silent hangs.
+    stdlib http.client sends clean, minimal HTTP/1.1 that ESP-IDF handles.
+    """
+    import http.client
+    import json as _json
+
+    conn = http.client.HTTPConnection(host, port, timeout=timeout)
+    try:
+        conn.request("GET", path, headers={"Accept": "application/json"})
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", errors="replace")
+        return resp.status, body
+    finally:
+        conn.close()
+
+
 @node_router.post(
     "/probe",
     summary="Auto-detect a node",
@@ -167,7 +188,13 @@ async def probe_node(request: Request) -> JSONResponse:
     4. GET /api/v1/servo/scan — servo bus discovery
 
     Returns partial results if later steps fail.
+
+    Uses stdlib http.client instead of httpx because ESP-IDF's httpd
+    does not respond to httpx/httpcore's request format.
     """
+    import asyncio
+    import json as _json
+
     try:
         body = await request.json()
     except Exception:
@@ -175,59 +202,63 @@ async def probe_node(request: Request) -> JSONResponse:
 
     host = body.get("host", "")
     port = body.get("port", 80)
-    timeout = body.get("timeout_seconds", 5)
+    timeout = body.get("timeout_seconds", 8)
 
     if not host:
         return JSONResponse(status_code=422, content={"detail": "'host' is required"})
 
-    base_url = f"http://{host}:{port}"
     result: dict[str, Any] = {"reachable": False}
+    loop = asyncio.get_running_loop()
 
+    async def _get(path: str) -> tuple[int, dict[str, Any] | None]:
+        """Run blocking http.client call in thread pool."""
+        try:
+            status, body_text = await loop.run_in_executor(
+                None, _sync_get, host, port, path, timeout,
+            )
+            if status == 200:
+                return status, _json.loads(body_text)
+            return status, None
+        except Exception as exc:
+            logger.debug("probe_request_failed", path=path, error=str(exc))
+            raise
+
+    # Step 1: Health check
     try:
-        import httpx
-    except ImportError:
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "httpx not installed — required for node probing"},
-        )
-
-    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:  # noqa: S501
-        # Step 1: Health check
-        try:
-            resp = await client.get(f"{base_url}/api/v1/health")
-            if resp.status_code == 200:
-                result["reachable"] = True
-                result["health"] = resp.json()
-            else:
-                result["health_error"] = f"HTTP {resp.status_code}"
-                return JSONResponse(content=result)
-        except Exception as exc:
-            result["health_error"] = str(exc)
+        status, data = await _get("/api/v1/health")
+        if status == 200 and data is not None:
+            result["reachable"] = True
+            result["health"] = data
+        else:
+            result["health_error"] = f"HTTP {status}"
             return JSONResponse(content=result)
+    except Exception as exc:
+        result["health_error"] = str(exc)
+        return JSONResponse(content=result)
 
-        # Step 2: System info
-        try:
-            resp = await client.get(f"{base_url}/api/v1/system/info")
-            if resp.status_code == 200:
-                result["info"] = resp.json()
-        except Exception as exc:
-            result["info_error"] = str(exc)
+    # Step 2: System info
+    try:
+        status, data = await _get("/api/v1/system/info")
+        if status == 200 and data is not None:
+            result["info"] = data
+    except Exception as exc:
+        result["info_error"] = str(exc)
 
-        # Step 3: System config
-        try:
-            resp = await client.get(f"{base_url}/api/v1/system/config")
-            if resp.status_code == 200:
-                result["config"] = resp.json()
-        except Exception as exc:
-            result["config_error"] = str(exc)
+    # Step 3: System config
+    try:
+        status, data = await _get("/api/v1/system/config")
+        if status == 200 and data is not None:
+            result["config"] = data
+    except Exception as exc:
+        result["config_error"] = str(exc)
 
-        # Step 4: Servo scan
-        try:
-            resp = await client.get(f"{base_url}/api/v1/servo/scan")
-            if resp.status_code == 200:
-                result["servo_scan"] = resp.json()
-        except Exception as exc:
-            result["servo_scan_error"] = str(exc)
+    # Step 4: Servo scan
+    try:
+        status, data = await _get("/api/v1/servo/scan")
+        if status == 200 and data is not None:
+            result["servo_scan"] = data
+    except Exception as exc:
+        result["servo_scan_error"] = str(exc)
 
     logger.info("node_probed", host=host, port=port, reachable=result["reachable"])
     return JSONResponse(content=result)
