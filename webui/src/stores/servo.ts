@@ -93,9 +93,10 @@ export const useServoStore = create<ServoStore>((set, get) => ({
     set({ scanning: true, error: null })
     try {
       const result = await servo.scan()
-      set({ scannedIds: result.found_ids, scanning: false })
+      const ids = Array.isArray(result.found_ids) ? result.found_ids : []
+      set({ scannedIds: ids, scanning: false })
       // Fetch state for each found servo
-      for (const id of result.found_ids) {
+      for (const id of ids) {
         get().fetchState(id)
       }
     } catch (e) {

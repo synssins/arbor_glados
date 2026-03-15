@@ -107,23 +107,42 @@ export default function FirstBootWizard() {
   }
 
   const handleCopyCode = async () => {
-    if (createdKey) {
+    if (!createdKey) return
+    // Try modern clipboard API first (requires HTTPS / secure context)
+    if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(createdKey.plaintext_key)
         setCopied(true)
         clearTimeout(copyTimeoutRef.current)
         copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000)
+        return
       } catch {
-        // Fallback: select the text for manual copy
-        const el = document.getElementById('access-code-display')
-        if (el) {
-          const range = document.createRange()
-          range.selectNodeContents(el)
-          window.getSelection()?.removeAllRanges()
-          window.getSelection()?.addRange(range)
-        }
+        // Fall through to legacy method
       }
     }
+    // Legacy fallback for HTTP — works in all browsers
+    const textarea = document.createElement('textarea')
+    textarea.value = createdKey.plaintext_key
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      setCopied(true)
+      clearTimeout(copyTimeoutRef.current)
+      copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Last resort: select the visible text for manual Ctrl+C
+      const el = document.getElementById('access-code-display')
+      if (el) {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        window.getSelection()?.removeAllRanges()
+        window.getSelection()?.addRange(range)
+      }
+    }
+    document.body.removeChild(textarea)
   }
 
   const handleFinish = () => {
