@@ -5,6 +5,12 @@
  * Phase 1: plain HTTP only. TLS support (esp_https_server) will be
  * added in Phase 2 once certificate provisioning is implemented.
  *
+ * Timeout policy:
+ *   recv_wait_timeout  — max seconds to wait for client to send request body.
+ *                        Defends against slow-loris and stuck clients.
+ *   send_wait_timeout  — max seconds to wait for client to ACK response data.
+ *                        Prevents a dead client from holding a socket forever.
+ *
  * Task: F03
  */
 
@@ -14,6 +20,18 @@
 #include "esp_log.h"
 
 static const char *TAG = "sb_http";
+
+/* ── HTTP Server Timeouts ── */
+
+/** Max seconds to wait for a client to send request body data.
+ *  Protects against slow-loris attacks and clients that open a
+ *  connection but never finish sending. */
+#define HTTP_RECV_TIMEOUT_S   5
+
+/** Max seconds to wait for a client to acknowledge response data.
+ *  Prevents a dead/disconnected client from holding a socket slot
+ *  indefinitely — important since max_open_sockets is limited. */
+#define HTTP_SEND_TIMEOUT_S   5
 
 static httpd_handle_t s_server = NULL;
 
@@ -40,6 +58,8 @@ esp_err_t sb_http_server_start(const sb_server_config_t *config)
     httpd_config.lru_purge_enable = true;     /* close oldest idle socket when full instead of rejecting */
     httpd_config.stack_size = 8192;
     httpd_config.uri_match_fn = httpd_uri_match_wildcard;
+    httpd_config.recv_wait_timeout = HTTP_RECV_TIMEOUT_S;
+    httpd_config.send_wait_timeout = HTTP_SEND_TIMEOUT_S;
 
     esp_err_t ret = httpd_start(&s_server, &httpd_config);
     if (ret != ESP_OK) {

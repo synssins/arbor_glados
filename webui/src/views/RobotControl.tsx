@@ -47,6 +47,7 @@ function JointSliders({ profile }: { profile: RobotProfile }) {
           type="range" min={0} max={2000} value={speed}
           onChange={(e) => setSpeed(Number(e.target.value))}
           className="flex-1"
+          aria-label="Joint movement speed"
         />
         <span className="w-16 text-right">{speed}</span>
       </div>
@@ -65,11 +66,12 @@ function JointSliders({ profile }: { profile: RobotProfile }) {
               value={currentVal}
               onChange={(e) => handleMove(joint.name, Number(e.target.value))}
               className="flex-1"
+              aria-label={`Position for joint ${joint.name}`}
             />
             <span className="w-20 text-xs text-right font-mono">
               {currentVal.toFixed(3)}
             </span>
-            <span className="w-16 text-xs text-gray-400">
+            <span className="w-16 text-xs text-gray-500">
               {joint.actuator.backend === 'arbor_servo' ? 'Arbor' : 'Klipper'}
             </span>
           </div>
@@ -110,21 +112,24 @@ function DrivePad({ profile }: { profile: RobotProfile }) {
         <div className="flex items-center gap-2">
           <label className="w-24 text-sm">Forward:</label>
           <input type="range" min={-2} max={2} step={0.1} value={linearX}
-            onChange={(e) => setLinearX(Number(e.target.value))} className="flex-1" />
+            onChange={(e) => setLinearX(Number(e.target.value))} className="flex-1"
+            aria-label="Forward velocity" />
           <span className="w-16 text-xs text-right font-mono">{linearX.toFixed(1)} m/s</span>
         </div>
         {isMecanum && (
           <div className="flex items-center gap-2">
             <label className="w-24 text-sm">Strafe:</label>
             <input type="range" min={-2} max={2} step={0.1} value={linearY}
-              onChange={(e) => setLinearY(Number(e.target.value))} className="flex-1" />
+              onChange={(e) => setLinearY(Number(e.target.value))} className="flex-1"
+              aria-label="Strafe velocity" />
             <span className="w-16 text-xs text-right font-mono">{linearY.toFixed(1)} m/s</span>
           </div>
         )}
         <div className="flex items-center gap-2">
           <label className="w-24 text-sm">Turn:</label>
           <input type="range" min={-3} max={3} step={0.1} value={angularZ}
-            onChange={(e) => setAngularZ(Number(e.target.value))} className="flex-1" />
+            onChange={(e) => setAngularZ(Number(e.target.value))} className="flex-1"
+            aria-label="Turn rate" />
           <span className="w-16 text-xs text-right font-mono">{angularZ.toFixed(1)} rad/s</span>
         </div>
       </div>
@@ -173,7 +178,7 @@ function CartesianControl({ profile }: { profile: RobotProfile }) {
               onChange={(e) => setPose({ ...pose, [f.key]: Number(e.target.value) })}
               className="w-full text-xs px-1 py-0.5 border rounded font-mono"
             />
-            <span className="text-xs text-gray-400">{f.unit}</span>
+            <span className="text-xs text-gray-500">{f.unit}</span>
           </div>
         ))}
       </div>
@@ -213,7 +218,7 @@ function StateDisplay({ profile }: { profile: RobotProfile }) {
           )}
         </div>
       ) : (
-        <div className="text-xs text-gray-400">No state data</div>
+        <div className="text-xs text-gray-500">No state data</div>
       )}
     </div>
   )
@@ -282,7 +287,7 @@ export default function RobotControl() {
         </select>
         {loading && <span className="text-sm text-gray-500">Loading...</span>}
         {profiles.length === 0 && !loading && (
-          <span className="text-sm text-gray-400">
+          <span className="text-sm text-gray-500">
             No robots configured. Create one via the API.
           </span>
         )}
@@ -304,7 +309,7 @@ export default function RobotControl() {
               {selected.description && (
                 <p className="text-sm text-gray-500 mb-2">{selected.description}</p>
               )}
-              <div className="text-xs text-gray-400">
+              <div className="text-xs text-gray-500">
                 {selected.joints.length} joints • ID: {selected.id}
               </div>
               <div className="flex gap-2 mt-3">

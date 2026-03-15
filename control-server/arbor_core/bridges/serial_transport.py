@@ -11,6 +11,13 @@ The serial port is managed via pyserial (when available) or a pluggable
 backend for testing. All I/O runs in a thread executor to avoid blocking
 the asyncio event loop.
 
+NOTE (Phase 1): The ESP32 firmware does not yet implement a JSON-line
+protocol handler on UART/USB-CDC — the UART is dedicated to the Feetech
+STS servo bus. Phase 1 uses WiFi/HTTP transport (HTTPTransport) for all
+node communication. This serial transport is retained for Phase 2 when
+a firmware-side JSON-line dispatcher may be added for wired operation.
+See decisions/DECISION_REQUEST_3.md.
+
 Task: C08
 """
 

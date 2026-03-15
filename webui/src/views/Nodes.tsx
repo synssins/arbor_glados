@@ -69,7 +69,7 @@ export default function Nodes() {
       <div className="card">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">Registered Nodes</h3>
         {loading ? (
-          <p className="text-sm text-gray-400">Loading...</p>
+          <p className="text-sm text-gray-500">Loading...</p>
         ) : nodes.length === 0 ? (
           <p className="text-sm text-gray-500">
             No nodes registered yet. Click <span className="font-medium">"+ Add Node"</span> to connect your first device.
@@ -85,14 +85,14 @@ export default function Nodes() {
                   }`} />
                   <div>
                     <span className="text-sm font-medium text-gray-800">{node.id}</span>
-                    <span className="text-xs text-gray-400 ml-2">
+                    <span className="text-xs text-gray-500 ml-2">
                       {node.type} via {node.transport}
                     </span>
                     {node.host && (
-                      <span className="text-xs text-gray-400 ml-2">{node.host}{node.port ? `:${node.port}` : ''}</span>
+                      <span className="text-xs text-gray-500 ml-2">{node.host}{node.port ? `:${node.port}` : ''}</span>
                     )}
                     {node.serial_port && (
-                      <span className="text-xs text-gray-400 ml-2">{node.serial_port}</span>
+                      <span className="text-xs text-gray-500 ml-2">{node.serial_port}</span>
                     )}
                   </div>
                 </div>
@@ -376,7 +376,7 @@ function AddNodeWizard({ step, setStep, probing, probeResult, probeError, onProb
                   value={nodeId}
                   onChange={(e) => setNodeId(e.target.value)}
                 />
-                <p className="text-xs text-gray-400 mt-1">Unique identifier for this node. Auto-generated from detected board ID.</p>
+                <p className="text-xs text-gray-500 mt-1">Unique identifier for this node. Auto-generated from detected board ID.</p>
               </div>
 
               {/* Summary */}
@@ -457,8 +457,8 @@ function ProbeStep({ label, ok, error, detail }: { label: string; ok: boolean; e
       </span>
       <div>
         <span className={ok ? 'text-gray-700' : 'text-red-600'}>{label}</span>
-        {detail && <span className="text-gray-400 ml-2">{detail}</span>}
-        {error && <span className="text-red-400 ml-2 text-xs">{error}</span>}
+        {detail && <span className="text-gray-500 ml-2">{detail}</span>}
+        {error && <span className="text-red-500 ml-2 text-xs">{error}</span>}
       </div>
     </div>
   )

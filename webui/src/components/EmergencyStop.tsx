@@ -1,14 +1,26 @@
 /**
- * Emergency stop button — always visible, all pages.
+ * Emergency stop button — 64×64px circular, always visible, all pages.
+ * Sized for easy targeting by grade-school students.
  * Task: W06
  */
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { emergency } from '../api/client'
 
 export default function EmergencyStop() {
   const [stopping, setStopping] = useState(false)
   const [result, setResult] = useState<string | null>(null)
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Auto-dismiss result after 5 seconds
+  useEffect(() => {
+    if (result) {
+      dismissTimer.current = setTimeout(() => setResult(null), 5000)
+    }
+    return () => {
+      if (dismissTimer.current) clearTimeout(dismissTimer.current)
+    }
+  }, [result])
 
   const handleStop = async () => {
     setStopping(true)
@@ -30,17 +42,25 @@ export default function EmergencyStop() {
   return (
     <div className="relative">
       <button
+        type="button"
         onClick={handleStop}
         disabled={stopping}
-        className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold px-4 py-2 rounded-lg shadow-lg transition-all text-sm uppercase tracking-wide disabled:opacity-50 ring-2 ring-red-400 ring-offset-1"
+        aria-label="Emergency stop — immediately disable all servo torque"
+        className="w-16 h-16 rounded-full bg-red-700 hover:bg-red-800 active:bg-red-900 text-white font-bold shadow-lg transition-all text-sm uppercase disabled:opacity-50 ring-4 ring-red-300 ring-offset-2 flex items-center justify-center focus:outline-none focus-visible:ring-yellow-700"
       >
-        {stopping ? '...' : 'E-STOP'}
+        {stopping ? 'STOPPING' : 'E-STOP'}
       </button>
-      {result && (
-        <div className="absolute right-0 top-full mt-1 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-50">
-          {result}
-        </div>
-      )}
+      {/* Always-present live region for screen reader announcements */}
+      <div
+        role="alert"
+        className={
+          result
+            ? 'absolute right-0 top-full mt-1 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-50'
+            : 'sr-only'
+        }
+      >
+        {result}
+      </div>
     </div>
   )
 }

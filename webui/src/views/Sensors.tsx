@@ -69,7 +69,7 @@ function ServoTemperature() {
           )
         })}
       </div>
-      <div className="flex justify-between text-xs text-gray-400">
+      <div className="flex justify-between text-xs text-gray-500">
         <span>-10°C</span>
         <span>70°C</span>
       </div>
@@ -119,7 +119,7 @@ function EndstopPanel() {
                 }`}
               />
               <span className="text-sm font-medium">Endstop #{es.index}</span>
-              <span className="text-xs text-gray-400">GPIO {es.pin}</span>
+              <span className="text-xs text-gray-500">GPIO {es.pin}</span>
             </div>
             <span
               className={`text-sm font-medium ${

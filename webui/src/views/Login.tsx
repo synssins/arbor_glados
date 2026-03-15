@@ -10,21 +10,21 @@ import { auth } from '../api/client'
 export default function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [apiKey, setApiKey] = useState('')
+  const [accessCode, setAccessCode] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<'login' | 'apikey'>('apikey')
+  const [mode, setMode] = useState<'accesscode' | 'login'>('accesscode')
   const navigate = useNavigate()
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
 
-    if (mode === 'apikey') {
-      if (!apiKey.trim()) {
-        setError('Please enter an API key')
+    if (mode === 'accesscode') {
+      if (!accessCode.trim()) {
+        setError('Please enter your access code')
         return
       }
-      localStorage.setItem('sb_token', apiKey.trim())
+      localStorage.setItem('sb_token', accessCode.trim())
       navigate('/')
       return
     }
@@ -47,10 +47,10 @@ export default function Login() {
 
         <div className="flex rounded-md bg-gray-100 p-1 mb-4">
           <button
-            className={`flex-1 text-sm py-1.5 rounded ${mode === 'apikey' ? 'bg-white shadow-sm font-medium' : 'text-gray-500'}`}
-            onClick={() => setMode('apikey')}
+            className={`flex-1 text-sm py-1.5 rounded ${mode === 'accesscode' ? 'bg-white shadow-sm font-medium' : 'text-gray-500'}`}
+            onClick={() => setMode('accesscode')}
           >
-            API Key
+            Access Code
           </button>
           <button
             className={`flex-1 text-sm py-1.5 rounded ${mode === 'login' ? 'bg-white shadow-sm font-medium' : 'text-gray-500'}`}
@@ -61,15 +61,19 @@ export default function Login() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === 'apikey' ? (
+          {mode === 'accesscode' ? (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                API Key
+              <label
+                htmlFor="access-code-input"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                Access Code
               </label>
               <input
+                id="access-code-input"
                 type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                value={accessCode}
+                onChange={(e) => setAccessCode(e.target.value)}
                 className="input"
                 placeholder="sb_..."
                 autoFocus
@@ -78,10 +82,14 @@ export default function Login() {
           ) : (
             <>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label
+                  htmlFor="username-input"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
                   Username
                 </label>
                 <input
+                  id="username-input"
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -90,10 +98,14 @@ export default function Login() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label
+                  htmlFor="password-input"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
                   Password
                 </label>
                 <input
+                  id="password-input"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -104,7 +116,7 @@ export default function Login() {
           )}
 
           {error && (
-            <p className="text-sm text-red-600">{error}</p>
+            <p role="alert" className="text-sm text-red-600">{error}</p>
           )}
 
           <button type="submit" className="btn-primary w-full">

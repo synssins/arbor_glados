@@ -45,7 +45,10 @@ class CORSConfig(BaseModel):
 
     allowed_origins: list[str] = Field(
         default_factory=list,
-        description="Allowed CORS origins. Empty list blocks all cross-origin requests.",
+        description=(
+            "Allowed CORS origins. Empty list defaults to wildcard "
+            "(all origins allowed) with a warning log for provisioning mode."
+        ),
     )
 
 
@@ -60,7 +63,7 @@ class ServerConfig(BaseModel):
         description="Bind address for the server.",
     )
     port: int = Field(
-        default=8443,
+        default=8000,
         ge=1,
         le=65535,
         description="Listen port.",
@@ -128,6 +131,7 @@ class LoggingConfig(BaseModel):
         if isinstance(v, str):
             return v.upper()
         return v
+
     format: Literal["json", "console"] = Field(
         default="json",
         description="Log output format. 'json' for production, 'console' for development.",

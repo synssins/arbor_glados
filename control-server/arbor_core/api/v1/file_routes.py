@@ -161,14 +161,16 @@ async def list_directory(root_id: str, request: Request) -> JSONResponse:
     if source == "moonraker":
         return await _list_moonraker(root, rel_path, request)
     else:
-        return _list_filesystem(root, rel_path)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _list_filesystem, root, rel_path)
 
 
 def _list_filesystem(root: dict[str, Any], rel_path: str) -> JSONResponse:
     """List directory from filesystem."""
     target = _validate_path(root["base_path"], rel_path)
     if target is None:
-        return JSONResponse(status_code=403, content={"detail": "Path traversal not allowed"})
+        logger.warning("path_traversal_blocked", root=root.get("id"), path=rel_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     if not target.exists():
         return JSONResponse(status_code=404, content={"detail": "Path not found"})
@@ -196,7 +198,8 @@ def _list_filesystem(root: dict[str, Any], rel_path: str) -> JSONResponse:
                     "modified": entry.stat().st_mtime,
                 })
     except PermissionError:
-        return JSONResponse(status_code=403, content={"detail": "Permission denied"})
+        logger.warning("permission_denied", root=root.get("id"), path=rel_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     return JSONResponse(content={"path": rel_path, "items": items, "count": len(items)})
 
@@ -207,12 +210,13 @@ async def _list_moonraker(root: dict[str, Any], rel_path: str, request: Request)
     host = moonraker_cfg.get("host", "localhost")
     port = moonraker_cfg.get("port", 7125)
 
-    # Moonraker API: GET /server/files/directory?path={path}&root=config
-    # When rel_path is empty (root listing), omit the path param
+    # Moonraker API: GET /server/files/directory?path={moonraker_root}/{subpath}
+    # The path param includes the Moonraker root name (e.g. "config")
+    moonraker_root = root.get("moonraker_root", "config")
     if rel_path:
-        api_path = f"/server/files/directory?path={quote(rel_path)}&root=config"
+        api_path = f"/server/files/directory?path={quote(moonraker_root)}/{quote(rel_path)}"
     else:
-        api_path = "/server/files/directory?root=config"
+        api_path = f"/server/files/directory?path={quote(moonraker_root)}"
 
     status, body = await _async_moonraker("GET", api_path, host, port)
     if status >= 400:
@@ -268,14 +272,16 @@ async def read_file(root_id: str, request: Request) -> JSONResponse:
     if source == "moonraker":
         return await _read_moonraker(root, file_path, max_size, request)
     else:
-        return _read_filesystem(root, file_path, max_size)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _read_filesystem, root, file_path, max_size)
 
 
 def _read_filesystem(root: dict[str, Any], file_path: str, max_size: int) -> JSONResponse:
     """Read file from filesystem."""
     target = _validate_path(root["base_path"], file_path)
     if target is None:
-        return JSONResponse(status_code=403, content={"detail": "Path traversal not allowed"})
+        logger.warning("path_traversal_blocked", root=root.get("id"), path=file_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     if not target.exists():
         return JSONResponse(status_code=404, content={"detail": "File not found"})
@@ -288,12 +294,14 @@ def _read_filesystem(root: dict[str, Any], file_path: str, max_size: int) -> JSO
 
     allowed_ext = root.get("allowed_extensions", [])
     if not _validate_extension(target.name, allowed_ext):
-        return JSONResponse(status_code=403, content={"detail": f"Extension '{target.suffix}' not allowed"})
+        logger.warning("extension_blocked", root=root.get("id"), path=file_path, ext=target.suffix)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     try:
         content = target.read_text(encoding="utf-8", errors="replace")
     except PermissionError:
-        return JSONResponse(status_code=403, content={"detail": "Permission denied"})
+        logger.warning("permission_denied", root=root.get("id"), path=file_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     return JSONResponse(content={
         "path": file_path,
@@ -311,8 +319,9 @@ async def _read_moonraker(
     host = moonraker_cfg.get("host", "localhost")
     port = moonraker_cfg.get("port", 7125)
 
-    # Moonraker: GET /server/files/config/{path} returns raw file content
-    api_path = f"/server/files/config/{quote(file_path)}"
+    # Moonraker: GET /server/files/{root}/{path} returns raw file content
+    moonraker_root = root.get("moonraker_root", "config")
+    api_path = f"/server/files/{quote(moonraker_root)}/{quote(file_path)}"
     status, body = await _async_moonraker("GET", api_path, host, port)
 
     if status >= 400:
@@ -366,18 +375,21 @@ async def write_file(root_id: str, request: Request) -> JSONResponse:
     if source == "moonraker":
         return await _write_moonraker(root, file_path, content, request)
     else:
-        return _write_filesystem(root, file_path, content)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _write_filesystem, root, file_path, content)
 
 
 def _write_filesystem(root: dict[str, Any], file_path: str, content: str) -> JSONResponse:
     """Write file to filesystem with .bak backup."""
     target = _validate_path(root["base_path"], file_path)
     if target is None:
-        return JSONResponse(status_code=403, content={"detail": "Path traversal not allowed"})
+        logger.warning("path_traversal_blocked", root=root.get("id"), path=file_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     allowed_ext = root.get("allowed_extensions", [])
     if not _validate_extension(target.name, allowed_ext):
-        return JSONResponse(status_code=403, content={"detail": f"Extension '{target.suffix}' not allowed"})
+        logger.warning("extension_blocked", root=root.get("id"), path=file_path, ext=target.suffix)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     try:
         # Create backup if file exists
@@ -399,7 +411,8 @@ def _write_filesystem(root: dict[str, Any], file_path: str, content: str) -> JSO
             "size": len(content),
         })
     except PermissionError:
-        return JSONResponse(status_code=403, content={"detail": "Permission denied"})
+        logger.warning("permission_denied", root=root.get("id"), path=file_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
@@ -413,14 +426,30 @@ async def _write_moonraker(
     port = moonraker_cfg.get("port", 7125)
 
     # Moonraker upload: POST /server/files/upload (multipart)
+    # Per docs: 'root' = target root, 'path' = subdirectory (optional),
+    # 'file' filename = just the filename (not full path)
     boundary = "----ArborFileUpload"
+    moonraker_root = root.get("moonraker_root", "config")
+
+    # Split file_path into subdirectory and filename
+    file_p = Path(file_path)
+    upload_filename = file_p.name
+    upload_subdir = str(file_p.parent) if file_p.parent != Path(".") else ""
+
     body_parts = []
     body_parts.append(f"--{boundary}")
     body_parts.append('Content-Disposition: form-data; name="root"')
     body_parts.append("")
-    body_parts.append("config")
+    body_parts.append(moonraker_root)
+    if upload_subdir:
+        body_parts.append(f"--{boundary}")
+        body_parts.append('Content-Disposition: form-data; name="path"')
+        body_parts.append("")
+        body_parts.append(upload_subdir)
     body_parts.append(f"--{boundary}")
-    body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{file_path}"')
+    # Sanitize filename to prevent header injection via embedded quotes
+    safe_filename = upload_filename.replace('"', "_").replace("\r", "").replace("\n", "")
+    body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{safe_filename}"')
     body_parts.append("Content-Type: text/plain")
     body_parts.append("")
     body_parts.append(content)
@@ -469,14 +498,16 @@ async def delete_file(root_id: str, request: Request) -> JSONResponse:
     if source == "moonraker":
         return await _delete_moonraker(root, file_path, request)
     else:
-        return _delete_filesystem(root, file_path)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _delete_filesystem, root, file_path)
 
 
 def _delete_filesystem(root: dict[str, Any], file_path: str) -> JSONResponse:
     """Delete file from filesystem."""
     target = _validate_path(root["base_path"], file_path)
     if target is None:
-        return JSONResponse(status_code=403, content={"detail": "Path traversal not allowed"})
+        logger.warning("path_traversal_blocked", root=root.get("id"), path=file_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     if not target.exists():
         return JSONResponse(status_code=404, content={"detail": "File not found"})
@@ -489,7 +520,8 @@ def _delete_filesystem(root: dict[str, Any], file_path: str) -> JSONResponse:
         logger.info("file_deleted", path=str(target))
         return JSONResponse(content={"ok": True, "path": file_path})
     except PermissionError:
-        return JSONResponse(status_code=403, content={"detail": "Permission denied"})
+        logger.warning("permission_denied", root=root.get("id"), path=file_path)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
 
 async def _delete_moonraker(
@@ -500,7 +532,8 @@ async def _delete_moonraker(
     host = moonraker_cfg.get("host", "localhost")
     port = moonraker_cfg.get("port", 7125)
 
-    api_path = f"/server/files/config/{quote(file_path)}"
+    moonraker_root = root.get("moonraker_root", "config")
+    api_path = f"/server/files/{quote(moonraker_root)}/{quote(file_path)}"
     status, body = await _async_moonraker("DELETE", api_path, host, port)
 
     if status >= 400:

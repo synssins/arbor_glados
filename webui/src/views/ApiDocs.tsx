@@ -91,7 +91,7 @@ function Endpoint({ method, path, desc }: { method: string; path: string; desc: 
         {method}
       </span>
       <code className="text-xs font-mono text-gray-600">{path}</code>
-      <span className="text-xs text-gray-400">— {desc}</span>
+      <span className="text-xs text-gray-500">— {desc}</span>
     </div>
   )
 }

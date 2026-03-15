@@ -86,7 +86,7 @@ class TestLoadFromYAML:
         empty = tmp_path / "empty.yaml"
         empty.write_text("", encoding="utf-8")
         cfg = load_config(config_path=empty)
-        assert cfg.server.port == 8443  # default
+        assert cfg.server.port == 8000  # default
         assert cfg.version == "1.0"
 
     def test_yaml_with_only_mapping(self, tmp_path: Path) -> None:
@@ -195,4 +195,4 @@ class TestConfigFileDiscovery:
         monkeypatch.setenv("ARBOR_CONFIG", "/nonexistent/path.yaml")
         # Should fall through to defaults (not raise)
         cfg = load_config()
-        assert cfg.server.port == 8443  # default
+        assert cfg.server.port == 8000  # default

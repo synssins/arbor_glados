@@ -117,6 +117,11 @@ class APIKeyManager:
         self._hasher = PasswordHasher()
         self._keys: dict[str, APIKeyRecord] = {}
 
+    @property
+    def key_count(self) -> int:
+        """Number of active (non-revoked) keys. Zero means provisioning mode."""
+        return sum(1 for k in self._keys.values() if not k.revoked)
+
     def create_key(
         self,
         name: str,
@@ -220,15 +225,24 @@ class APIKeyManager:
             for record in self._keys.values()
         ]
 
-    def revoke_key(self, key_id: str) -> bool:
+    def revoke_key(self, key_id: str, *, allow_last: bool = False) -> bool:
         """
         Revoke an API key by ID.
 
+        The check-and-revoke is atomic (single synchronous method) to
+        prevent race conditions between key_count check and revocation.
+        When allow_last is False (default), revoking the last active key
+        is refused to prevent re-entering provisioning mode.
+
         Args:
             key_id: The UUID of the key to revoke.
+            allow_last: If True, allow revoking even the last key.
 
         Returns:
             True if the key was found and revoked, False if not found.
+
+        Raises:
+            ValueError: If this is the last active key and allow_last is False.
         """
         record = self._keys.get(key_id)
         if record is None:
@@ -238,6 +252,11 @@ class APIKeyManager:
         if record.revoked:
             logger.info("api_key_already_revoked", key_id=key_id)
             return True
+
+        # Guard: prevent revoking the last active key (atomic with revoke)
+        if not allow_last and self.key_count <= 1:
+            logger.warning("api_key_revoke_blocked_last", key_id=key_id)
+            raise ValueError("Cannot revoke the last active access code")
 
         record.revoked = True
         record.revoked_at = datetime.now(tz=timezone.utc)

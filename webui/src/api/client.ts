@@ -67,6 +67,9 @@ export interface SystemInfo {
   ip_addr?: string
   ap_mode?: boolean
   ssid?: string
+  provisioning_mode?: boolean
+  arbor_version?: string
+  node_count?: number
 }
 
 export interface PluginInfo {
@@ -188,12 +191,14 @@ export interface ServoState {
 export interface SyncMove {
   id: number
   position: number
+  speed?: number
+  time?: number
 }
 
 export const servo = {
   state: (id: number) => request<ServoState>('GET', `/servo/${id}/state`),
-  setPosition: (id: number, position: number) =>
-    request<{ ok: boolean }>('PUT', `/servo/${id}/position`, { position }),
+  setPosition: (id: number, position: number, opts?: { speed?: number; time?: number }) =>
+    request<{ ok: boolean }>('PUT', `/servo/${id}/position`, { position, ...opts }),
   setSpeed: (id: number, speed: number) =>
     request<{ ok: boolean }>('PUT', `/servo/${id}/speed`, { speed }),
   setTorque: (id: number, enabled: boolean) =>
@@ -635,8 +640,18 @@ export const files = {
 
 // ── Auth ──
 
+export interface ApiKeyCreateResult {
+  id: string
+  name: string
+  prefix: string
+  plaintext_key: string
+  created_at: string
+}
+
 export const auth = {
   login: (username: string, password: string) =>
     request<{ token: string }>('POST', '/auth/login', { username, password }),
   logout: () => request<void>('POST', '/auth/logout'),
+  createApiKey: (name: string, scopes: string[] = ['admin']) =>
+    request<ApiKeyCreateResult>('POST', '/auth/api-keys', { name, scopes }),
 }

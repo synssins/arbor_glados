@@ -83,7 +83,12 @@ Create `/etc/arbor/arbor.yaml`:
 server:
   host: "0.0.0.0"
   port: 8000
-  debug: false
+  cors:
+    # Set to your server's actual hostname/IP to lock down CORS.
+    # Empty list defaults to wildcard (all origins) for development.
+    allowed_origins:
+      - "http://arbor.local"
+      - "https://arbor.local"
 
 security:
   api_key_min_length: 32
@@ -233,3 +238,5 @@ tail -f /var/log/nginx/arbor-error.log
 - systemd hardening: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
 - The `synthesis` user runs both Klipper ecosystem services and Arbor Core
 - SSH credentials and deployment scripts are in `.claude/` (gitignored, never committed)
+- **CORS**: Arbor handles CORS at the application layer. Do NOT add CORS headers (`add_header Access-Control-*`) in nginx — this causes duplicate headers that browsers reject. Configure origins in `server.cors.allowed_origins` in `arbor.yaml`.
+- **CORS in production**: Always set explicit `allowed_origins` in the config. The wildcard fallback (empty list) is for first-boot/development only.

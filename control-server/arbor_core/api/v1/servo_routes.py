@@ -16,13 +16,55 @@ Task: C11
 
 from __future__ import annotations
 
-from typing import Any
-
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from arbor_core.bridges.proxy import NodeProxy, ProxyError
+
+
+# ---------------------------------------------------------------------------
+# Request body models (FastAPI auto-parses and validates these)
+# ---------------------------------------------------------------------------
+class SetPositionRequest(BaseModel):
+    """Body for PUT /servo/{id}/position.
+
+    ST3215: 12-bit position (0-4095 = 0-360°).
+    Optional speed (steps/s) and time (ms) for profiled moves.
+    """
+
+    position: int = Field(ge=0, le=4095, description="Target position in steps (0-4095).")
+    speed: int | None = Field(default=None, ge=0, le=4095, description="Speed limit in steps/s (0-4095). Optional.")
+    time: int | None = Field(default=None, ge=0, le=30000, description="Arrival time in ms (0-30000). Optional.")
+
+
+class SetSpeedRequest(BaseModel):
+    """Body for PUT /servo/{id}/speed."""
+
+    speed: int = Field(ge=0, le=4095, description="Maximum speed in steps/s (0-4095).")
+
+
+class SetTorqueRequest(BaseModel):
+    """Body for PUT /servo/{id}/torque."""
+
+    enabled: bool = Field(description="True to enable torque, false to disable.")
+
+
+class SyncMoveItem(BaseModel):
+    """A single servo move within a sync command."""
+
+    id: int = Field(ge=0, le=253, description="Servo ID (0-253).")
+    position: int = Field(ge=0, le=4095, description="Target position in steps (0-4095).")
+    speed: int | None = Field(default=None, ge=0, le=4095, description="Speed limit in steps/s. Optional.")
+    time: int | None = Field(default=None, ge=0, le=30000, description="Arrival time in ms. Optional.")
+
+
+class SyncMoveRequest(BaseModel):
+    """Body for POST /servo/sync."""
+
+    moves: list[SyncMoveItem] = Field(min_length=1, max_length=253, description="List of servo moves.")
+
 
 logger = structlog.get_logger(__name__)
 
@@ -57,7 +99,10 @@ def _get_node_id(request: Request) -> str:
     summary="Get servo state",
     description="Returns position, speed, load, temperature, and voltage for a servo.",
 )
-async def get_servo_state(servo_id: int, request: Request) -> JSONResponse:
+async def get_servo_state(
+    request: Request,
+    servo_id: int = Path(ge=0, le=253, description="Servo ID (0-253)."),
+) -> JSONResponse:
     """Get full state of a servo by ID."""
     try:
         proxy = _get_proxy(request)
@@ -73,22 +118,20 @@ async def get_servo_state(servo_id: int, request: Request) -> JSONResponse:
 @servo_router.put(
     "/{servo_id}/position",
     summary="Set servo position",
-    description="Set the target position for a servo.",
+    description="Set the target position for a servo. Optionally include speed and/or time for profiled moves.",
 )
-async def set_servo_position(servo_id: int, request: Request) -> JSONResponse:
+async def set_servo_position(
+    request: Request,
+    body: SetPositionRequest,
+    servo_id: int = Path(ge=0, le=253, description="Servo ID (0-253)."),
+) -> JSONResponse:
     """Set target position for a servo."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            status_code=422, content={"detail": "Invalid JSON body"}
-        )
-
     try:
         proxy = _get_proxy(request)
         node_id = _get_node_id(request)
+        payload = body.model_dump(exclude_none=True)
         result = await proxy.forward(
-            node_id, "PUT", f"/servo/{servo_id}/position", body
+            node_id, "PUT", f"/servo/{servo_id}/position", payload
         )
         return JSONResponse(content=result)
     except ProxyError as exc:
@@ -100,20 +143,17 @@ async def set_servo_position(servo_id: int, request: Request) -> JSONResponse:
     summary="Set servo speed",
     description="Set the maximum speed for a servo.",
 )
-async def set_servo_speed(servo_id: int, request: Request) -> JSONResponse:
+async def set_servo_speed(
+    request: Request,
+    body: SetSpeedRequest,
+    servo_id: int = Path(ge=0, le=253, description="Servo ID (0-253)."),
+) -> JSONResponse:
     """Set max speed for a servo."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            status_code=422, content={"detail": "Invalid JSON body"}
-        )
-
     try:
         proxy = _get_proxy(request)
         node_id = _get_node_id(request)
         result = await proxy.forward(
-            node_id, "PUT", f"/servo/{servo_id}/speed", body
+            node_id, "PUT", f"/servo/{servo_id}/speed", body.model_dump()
         )
         return JSONResponse(content=result)
     except ProxyError as exc:
@@ -125,20 +165,17 @@ async def set_servo_speed(servo_id: int, request: Request) -> JSONResponse:
     summary="Set servo torque",
     description="Enable or disable torque for a servo.",
 )
-async def set_servo_torque(servo_id: int, request: Request) -> JSONResponse:
+async def set_servo_torque(
+    request: Request,
+    body: SetTorqueRequest,
+    servo_id: int = Path(ge=0, le=253, description="Servo ID (0-253)."),
+) -> JSONResponse:
     """Enable or disable torque for a servo."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            status_code=422, content={"detail": "Invalid JSON body"}
-        )
-
     try:
         proxy = _get_proxy(request)
         node_id = _get_node_id(request)
         result = await proxy.forward(
-            node_id, "PUT", f"/servo/{servo_id}/torque", body
+            node_id, "PUT", f"/servo/{servo_id}/torque", body.model_dump()
         )
         return JSONResponse(content=result)
     except ProxyError as exc:
@@ -150,19 +187,13 @@ async def set_servo_torque(servo_id: int, request: Request) -> JSONResponse:
     summary="Synchronized multi-servo move",
     description="Move multiple servos to target positions simultaneously.",
 )
-async def servo_sync(request: Request) -> JSONResponse:
+async def servo_sync(body: SyncMoveRequest, request: Request) -> JSONResponse:
     """Synchronized move of multiple servos."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            status_code=422, content={"detail": "Invalid JSON body"}
-        )
-
     try:
         proxy = _get_proxy(request)
         node_id = _get_node_id(request)
-        result = await proxy.forward(node_id, "POST", "/servo/sync", body)
+        payload = body.model_dump(exclude_none=True)
+        result = await proxy.forward(node_id, "POST", "/servo/sync", payload)
         return JSONResponse(content=result)
     except ProxyError as exc:
         return JSONResponse(status_code=502, content={"detail": str(exc)})

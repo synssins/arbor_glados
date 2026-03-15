@@ -44,21 +44,36 @@ static const char *get_mime_type(const char *path)
 
 /**
  * Send a file from SPIFFS with proper headers.
+ * Tries the gzipped variant first ({filepath}.gz) for smaller transfers.
  * Returns true if file was found and sent.
  */
 static bool send_file(httpd_req_t *req, const char *filepath)
 {
+    char gz_path[MAX_PATH + 4];
+    bool is_gzipped = false;
+    const char *actual_path = filepath;
+
+    /* Try gzipped variant first. */
+    snprintf(gz_path, sizeof(gz_path), "%s.gz", filepath);
     struct stat st;
-    if (stat(filepath, &st) != 0) {
+    if (stat(gz_path, &st) == 0) {
+        actual_path = gz_path;
+        is_gzipped = true;
+    } else if (stat(filepath, &st) != 0) {
         return false;
     }
 
-    FILE *f = fopen(filepath, "r");
+    FILE *f = fopen(actual_path, "r");
     if (!f) {
         return false;
     }
 
+    /* Set MIME type based on original (non-gz) path. */
     httpd_resp_set_type(req, get_mime_type(filepath));
+
+    if (is_gzipped) {
+        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    }
 
     /* Cache static assets (hashed filenames) for 1 year. */
     if (strstr(filepath, "/assets/")) {

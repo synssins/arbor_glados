@@ -1,13 +1,17 @@
 /**
  * Settings view — device name, WiFi, LED, OTA, pin configuration, restart.
- * Task: W09 (part of servo/system config UI)
+ * Student mode shows Device Name, WiFi, LED, OTA, Backup/Restore only.
+ * Expert mode adds Pin Config, raw JSON config, File Manager, Restart button.
+ * Task: W09, W16
  */
 
 import { useEffect, useState } from 'react'
 import { system, otaUpload, led, type WifiNetwork, type WifiState, type FileEntry } from '../api/client'
 import { useSystemStore } from '../stores/system'
+import { useIsExpert } from '../stores/ui'
 
 export default function Settings() {
+  const isExpert = useIsExpert()
   const [config, setConfig] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -61,9 +65,11 @@ export default function Settings() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">Settings</h2>
-        <button onClick={handleRestart} className="btn-secondary">
-          Restart Node
-        </button>
+        {isExpert && (
+          <button onClick={handleRestart} className="btn-secondary">
+            Restart Node
+          </button>
+        )}
       </div>
 
       {saveMsg && (
@@ -75,12 +81,12 @@ export default function Settings() {
       <DeviceName />
       <WifiConfig />
       <LedControl />
-      <OtaUpdate />
-      <BackupRestore />
-      <FileManager />
+      {isExpert && <OtaUpdate />}
+      {isExpert && <BackupRestore />}
+      {isExpert && <FileManager />}
 
-      {/* Configuration */}
-      {config && (
+      {/* Configuration (Expert only) */}
+      {isExpert && config && (
         <div className="card">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-gray-700">
@@ -96,8 +102,8 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Pin Configuration */}
-      {config && typeof config === 'object' && 'pins' in config && (
+      {/* Pin Configuration (Expert only) */}
+      {isExpert && config && typeof config === 'object' && 'pins' in config && (
         <PinConfig
           pins={config.pins as Record<string, unknown>}
           onChange={(pins) => setConfig({ ...config, pins })}
@@ -148,6 +154,7 @@ function DeviceName() {
           placeholder="Device name"
           className="input flex-1"
           onKeyDown={(e) => e.key === 'Enter' && handleRename()}
+          aria-label="Device name"
         />
         <button onClick={handleRename} disabled={renaming} className="btn-primary">
           {renaming ? 'Renaming...' : 'Rename'}
@@ -281,8 +288,8 @@ function WifiConfig() {
               >
                 <span className="font-medium">{net.ssid}</span>
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-xs text-gray-400">{signalBars(net.rssi)}</span>
-                  <span className="text-xs text-gray-400">{net.rssi} dBm</span>
+                  <span className="font-mono text-xs text-gray-500">{signalBars(net.rssi)}</span>
+                  <span className="text-xs text-gray-500">{net.rssi} dBm</span>
                   <span className="text-xs text-gray-500">{net.auth}</span>
                 </div>
               </button>
@@ -295,6 +302,7 @@ function WifiConfig() {
                     placeholder="Password"
                     className="input flex-1"
                     onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
+                    aria-label="WiFi password"
                   />
                   <button onClick={handleConnect} disabled={connecting} className="btn-primary">
                     {connecting ? 'Connecting...' : 'Connect'}
@@ -366,7 +374,10 @@ function LedControl() {
           <span className="text-sm text-gray-600">Identify</span>
           <button
             onClick={handleIdentifyToggle}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            role="switch"
+            aria-checked={identify}
+            aria-label={`${identify ? 'Disable' : 'Enable'} LED identify mode`}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-servo-500 ${
               identify ? 'bg-servo-600' : 'bg-gray-300'
             }`}
           >
@@ -436,6 +447,7 @@ function OtaUpdate() {
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           className="text-sm text-gray-600"
           disabled={uploading}
+          aria-label="Select firmware binary file"
         />
         <button
           onClick={handleUpload}
@@ -674,7 +686,7 @@ function FileManager() {
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-700">File Manager</h3>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-gray-500">
             {fmt(storage.used)} / {fmt(storage.total)} ({fmt(storage.free)} free)
           </span>
           <button onClick={handleUpload} className="btn-secondary text-xs">
@@ -691,7 +703,7 @@ function FileManager() {
             <div key={f.name} className="flex items-center justify-between py-2">
               <div>
                 <span className="text-sm font-mono">{f.name}</span>
-                <span className="text-xs text-gray-400 ml-2">{fmt(f.size)}</span>
+                <span className="text-xs text-gray-500 ml-2">{fmt(f.size)}</span>
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -713,7 +725,7 @@ function FileManager() {
       )}
 
       {!loading && files.length === 0 && (
-        <div className="text-sm text-gray-400">No config files on device</div>
+        <div className="text-sm text-gray-500">No config files on device</div>
       )}
 
       {msg && (

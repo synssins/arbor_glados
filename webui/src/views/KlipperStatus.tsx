@@ -96,7 +96,7 @@ export default function KlipperStatus() {
             )}
           </div>
         ) : (
-          <div className="text-sm text-gray-400">
+          <div className="text-sm text-gray-500">
             {error ? `Error: ${error}` : 'Loading...'}
           </div>
         )}

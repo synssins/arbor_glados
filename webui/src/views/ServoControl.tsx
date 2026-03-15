@@ -1,15 +1,20 @@
 /**
  * Servo Control & Configuration — comprehensive panel for Feetech STS3215 servos.
  * Covers all EEPROM/SRAM registers, live status, PID tuning, backup/restore, raw register view.
- * Task: W09
+ * Student mode shows Live Status + Movement Control only (safe for classroom use).
+ * Expert mode shows all sections including EEPROM writes, PID, registers, etc.
+ * Task: W09, W16
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useServoStore } from '../stores/servo'
 import { servo } from '../api/client'
 import { usePwmServoStore } from '../stores/pwmServo'
+import { useIsExpert } from '../stores/ui'
 import PwmServoCard from '../components/PwmServoCard'
 import AddPwmServoDialog from '../components/AddPwmServoDialog'
+import { usePresetStore, type ServoPreset } from '../stores/servoPresets'
+import { toast } from '../stores/toast'
 
 // ── 16-bit LE helpers ──
 
@@ -49,6 +54,19 @@ const MODE_LABELS: Record<number, string> = {
 
 const QUICK_POSITIONS = [0, 1024, 2048, 3072, 4095]
 
+/** Stable empty array for Zustand selector — prevents re-renders when no presets exist. */
+const EMPTY_PRESETS: ServoPreset[] = []
+
+/** Convert ST3215 position steps (0-4095) to degrees (0-360°).
+ *  ST3215 uses 12-bit position (0-4095 steps) spanning 0-360°.
+ *  Divisor is 4095 (max value), not 4096 (2^12), so max maps to exactly 360°.
+ *  Defensive: clamps NaN/negative/overflow to valid range. */
+const stepsToDegrees = (steps: number): string => {
+  if (!Number.isFinite(steps) || steps < 0) return '0.0'
+  if (steps > 4095) return '360.0'
+  return ((steps / 4095) * 360).toFixed(1)
+}
+
 // ── Collapsible Section ──
 
 function Section({
@@ -68,7 +86,7 @@ function Section({
         className="flex items-center justify-between w-full text-left text-sm font-medium text-gray-700 hover:text-gray-900 py-1"
       >
         <span>{title}</span>
-        <span className="text-xs text-gray-400">{open ? '\u25B2' : '\u25BC'}</span>
+        <span className="text-xs text-gray-500">{open ? '\u25B2' : '\u25BC'}</span>
       </button>
       {open && <div className="mt-2 space-y-3">{children}</div>}
     </div>
@@ -111,7 +129,7 @@ function FieldRow({
         readOnly={readOnly}
         onChange={(e) => onChange?.(e.target.value)}
       />
-      {unit && <span className="text-xs text-gray-400">{unit}</span>}
+      {unit && <span className="text-xs text-gray-500">{unit}</span>}
     </div>
   )
 }
@@ -124,7 +142,7 @@ function Stat({ label, value, unit }: { label: string; value: string | number; u
       <span className="text-gray-500 text-xs">{label}</span>
       <div className="font-mono text-xs">
         {value}
-        {unit ? <span className="text-gray-400 ml-0.5">{unit}</span> : null}
+        {unit ? <span className="text-gray-500 ml-0.5">{unit}</span> : null}
       </div>
     </div>
   )
@@ -133,6 +151,7 @@ function Stat({ label, value, unit }: { label: string; value: string | number; u
 // ── Per-servo card ──
 
 function ServoCard({ id }: { id: number }) {
+  const isExpert = useIsExpert()
   const servoState = useServoStore((s) => s.servos.get(id))
   const setPosition = useServoStore((s) => s.setPosition)
   const setTorque = useServoStore((s) => s.setTorque)
@@ -195,12 +214,26 @@ function ServoCard({ id }: { id: number }) {
   const refreshInterval = useRef<ReturnType<typeof setInterval> | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
 
+  // Saved presets
+  const presets = usePresetStore((s) => s.presets[id] ?? EMPTY_PRESETS)
+  const addPreset = usePresetStore((s) => s.addPreset)
+  const removePreset = usePresetStore((s) => s.removePreset)
+  const [savingPreset, setSavingPreset] = useState(false)
+  const [presetName, setPresetName] = useState('')
+  const presetInputRef = useRef<HTMLInputElement>(null)
+  const saveButtonRef = useRef<HTMLButtonElement>(null)
+
   // Sync slider with store state
   useEffect(() => {
     if (!dragging && servoState) {
       setLocalPos(servoState.position)
     }
   }, [servoState?.position, dragging, servoState])
+
+  // Auto-focus preset name input when save form appears
+  useEffect(() => {
+    if (savingPreset) presetInputRef.current?.focus()
+  }, [savingPreset])
 
   // Auto-refresh
   useEffect(() => {
@@ -295,6 +328,36 @@ function ServoCard({ id }: { id: number }) {
   const handleQuickPos = (pos: number) => {
     setLocalPos(pos)
     setPosition(id, pos)
+  }
+
+  const handleSavePreset = () => {
+    const name = presetName.trim() || `Position ${presets.length + 1}`
+    const added = addPreset(id, { name, position: localPos })
+    if (added) {
+      toast.success(`Saved "${name}"`)
+      setPresetName('')
+      setSavingPreset(false)
+      // Return focus to "+ Save" button after form closes
+      setTimeout(() => saveButtonRef.current?.focus(), 0)
+    }
+  }
+
+  const handleCancelPreset = () => {
+    setSavingPreset(false)
+    setPresetName('')
+    // Return focus to "+ Save" button after form closes
+    setTimeout(() => saveButtonRef.current?.focus(), 0)
+  }
+
+  const handleLoadPreset = (preset: ServoPreset) => {
+    setLocalPos(preset.position)
+    setPosition(id, preset.position)
+  }
+
+  const handleDeletePreset = (presetId: string) => {
+    removePreset(id, presetId)
+    // Return focus to "+ Save" button after preset removed
+    setTimeout(() => saveButtonRef.current?.focus(), 0)
   }
 
   const handleWriteMovement = async () => {
@@ -454,7 +517,7 @@ function ServoCard({ id }: { id: number }) {
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-sm">
           Servo #{id}
-          <span className="ml-2 text-xs font-normal text-gray-400">{MODE_LABELS[mode] ?? `Mode ${mode}`}</span>
+          <span className="ml-2 text-xs font-normal text-gray-500">{MODE_LABELS[mode] ?? `Mode ${mode}`}</span>
         </h3>
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
@@ -498,7 +561,7 @@ function ServoCard({ id }: { id: number }) {
             <div>
               <div className="flex justify-between text-xs text-gray-500 mb-1">
                 <span>Position</span>
-                <span className="font-mono">{localPos}</span>
+                <span className="font-mono">{localPos} <span className="text-gray-500">({stepsToDegrees(localPos)}°)</span></span>
               </div>
               <input
                 type="range"
@@ -508,11 +571,14 @@ function ServoCard({ id }: { id: number }) {
                 onChange={handleSliderChange}
                 onMouseUp={handleSliderRelease}
                 onTouchEnd={handleSliderRelease}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-servo-600"
+                onKeyUp={handleSliderRelease}
+                aria-label="Servo position"
+                aria-valuetext={`${stepsToDegrees(localPos)} degrees, step ${localPos} of 4095`}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-servo-600 focus:outline-none focus:ring-2 focus:ring-servo-500 focus:ring-offset-1"
               />
-              <div className="flex justify-between text-xs text-gray-400 mt-0.5">
-                <span>0</span>
-                <span>4095</span>
+              <div className="flex justify-between text-xs text-gray-500 mt-0.5">
+                <span>0 (0°)</span>
+                <span>4095 (360°)</span>
               </div>
             </div>
             <div className="flex gap-1">
@@ -520,11 +586,93 @@ function ServoCard({ id }: { id: number }) {
                 <button
                   key={pos}
                   onClick={() => handleQuickPos(pos)}
-                  className="flex-1 text-xs py-1 rounded bg-gray-100 hover:bg-gray-200 transition-colors"
+                  aria-label={`Move servo to ${stepsToDegrees(pos)} degrees (step ${pos})`}
+                  className="flex-1 text-xs py-1 rounded bg-gray-100 hover:bg-gray-200 transition-colors leading-tight"
                 >
-                  {pos}
+                  <span className="block font-medium">{stepsToDegrees(pos)}°</span>
+                  <span className="block text-gray-500" style={{fontSize: '0.6rem'}}>{pos}</span>
                 </button>
               ))}
+            </div>
+
+            {/* Saved Presets — available in Student + Expert mode */}
+            <div className="space-y-2 mt-1">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-medium text-gray-600 m-0">Saved Positions</h4>
+                {!savingPreset && (
+                  <button
+                    ref={saveButtonRef}
+                    onClick={() => setSavingPreset(true)}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium px-2 py-1 min-h-[36px] rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                    aria-label="Save current position as a preset"
+                  >
+                    + Save
+                  </button>
+                )}
+              </div>
+
+              {/* Inline save form */}
+              {savingPreset && (
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={presetInputRef}
+                    type="text"
+                    value={presetName}
+                    onChange={(e) => setPresetName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSavePreset()
+                      if (e.key === 'Escape') handleCancelPreset()
+                    }}
+                    placeholder={`Position ${presets.length + 1}`}
+                    className="input text-xs py-1 flex-1 min-w-0"
+                    maxLength={30}
+                    aria-label="Preset name"
+                  />
+                  <button
+                    onClick={handleSavePreset}
+                    className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors min-h-[36px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={handleCancelPreset}
+                    className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-600 hover:bg-gray-300 transition-colors min-h-[36px] focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {/* Preset buttons */}
+              {presets.length > 0 && (
+                <div className="flex flex-wrap gap-1" aria-live="polite">
+                  {presets.map((p) => (
+                    <div key={p.id} className="flex items-center bg-gray-50 rounded border border-gray-200">
+                      <button
+                        onClick={() => handleLoadPreset(p)}
+                        className="text-xs px-2 py-1 text-gray-700 hover:bg-gray-100 transition-colors rounded-l leading-tight min-h-[36px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                        aria-label={`Load preset "${p.name}" at ${stepsToDegrees(p.position)} degrees`}
+                      >
+                        <span className="block font-medium">{p.name}</span>
+                        <span className="block text-gray-500" style={{ fontSize: '0.6rem' }}>
+                          {stepsToDegrees(p.position)}°
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => handleDeletePreset(p.id)}
+                        className="text-gray-500 hover:text-red-500 transition-colors px-1 text-xs leading-none min-w-[36px] min-h-[36px] flex items-center justify-center rounded-r focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1"
+                        aria-label={`Remove preset "${p.name}"`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {presets.length === 0 && !savingPreset && (
+                <p className="text-xs text-gray-500 italic">No saved positions yet</p>
+              )}
             </div>
           </>
         )}
@@ -550,7 +698,7 @@ function ServoCard({ id }: { id: number }) {
                 onTouchEnd={handleWriteWheelSpeed}
                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-servo-600"
               />
-              <div className="flex justify-between text-xs text-gray-400 mt-0.5">
+              <div className="flex justify-between text-xs text-gray-500 mt-0.5">
                 <span>0</span>
                 <span>{mode === 1 ? '3400' : '100%'}</span>
               </div>
@@ -577,7 +725,7 @@ function ServoCard({ id }: { id: number }) {
             </div>
             <FieldRow label="Acceleration" value={accel} min={0} max={255} onChange={setAccel} />
             {mode === 1 && (
-              <div className="text-xs text-gray-400">
+              <div className="text-xs text-gray-500">
                 ~{(wheelSpeed * 0.732 / 50).toFixed(1)} RPM (50 steps/s = 0.732 RPM)
               </div>
             )}
@@ -613,7 +761,7 @@ function ServoCard({ id }: { id: number }) {
       {mode === 0 && (
         <Section title="Movement Control">
           <div className="space-y-2">
-            <FieldRow label="Goal Position" value={localPos} min={0} max={4095} onChange={(v) => { setLocalPos(parseInt(v) || 0); setPosition(id, parseInt(v) || 0) }} />
+            <FieldRow label="Goal Position" value={localPos} min={0} max={4095} unit={`= ${stepsToDegrees(localPos)}°`} onChange={(v) => { setLocalPos(parseInt(v) || 0); setPosition(id, parseInt(v) || 0) }} />
             <FieldRow label="Goal Time" value={goalTime} min={0} max={65535} unit="ms" onChange={setGoalTime} />
             <FieldRow label="Goal Speed" value={goalSpeed} min={0} max={65535} unit="steps/s" onChange={setGoalSpeed} />
             <FieldRow label="Acceleration" value={accel} min={0} max={255} onChange={setAccel} />
@@ -624,8 +772,8 @@ function ServoCard({ id }: { id: number }) {
         </Section>
       )}
 
-      {/* ── Section: Mode ── */}
-      <Section title="Mode">
+      {/* ── Section: Mode (Expert only) ── */}
+      {isExpert && <Section title="Mode">
         <div className="flex items-center gap-2">
           <select
             className="input text-xs py-1 w-48"
@@ -640,11 +788,11 @@ function ServoCard({ id }: { id: number }) {
             Write (EEPROM)
           </button>
         </div>
-        <p className="text-xs text-gray-400">Current register value: {regs ? regs[33] : '—'}</p>
-      </Section>
+        <p className="text-xs text-gray-500">Current register value: {regs ? regs[33] : '—'}</p>
+      </Section>}
 
-      {/* ── Section: PID Tuning ── */}
-      <Section title="PID Tuning">
+      {/* ── Section: PID Tuning (Expert only) ── */}
+      {isExpert && <Section title="PID Tuning">
         <div className="space-y-2">
           <FieldRow label="P Gain" value={pGain} min={0} max={255} onChange={setPGain} />
           <FieldRow label="D Gain" value={dGain} min={0} max={255} onChange={setDGain} />
@@ -653,10 +801,10 @@ function ServoCard({ id }: { id: number }) {
             Write PID (EEPROM)
           </button>
         </div>
-      </Section>
+      </Section>}
 
-      {/* ── Section: Limits ── */}
-      <Section title="Limits &amp; Protection">
+      {/* ── Section: Limits (Expert only) ── */}
+      {isExpert && <Section title="Limits &amp; Protection">
         <div className="space-y-2">
           <FieldRow label="Min Angle" value={minAngle} min={0} max={4095} onChange={setMinAngle} />
           <FieldRow label="Max Angle" value={maxAngle} min={0} max={4095} onChange={setMaxAngle} />
@@ -673,10 +821,10 @@ function ServoCard({ id }: { id: number }) {
             Write All Limits (EEPROM)
           </button>
         </div>
-      </Section>
+      </Section>}
 
-      {/* ── Section: Identity ── */}
-      <Section title="Identity">
+      {/* ── Section: Identity (Expert only) ── */}
+      {isExpert && <Section title="Identity">
         <div className="space-y-3">
           {/* ID change */}
           <div className="flex items-center gap-2">
@@ -716,7 +864,7 @@ function ServoCard({ id }: { id: number }) {
 
           {/* Read-only info from registers */}
           {regs && (
-            <div className="text-xs text-gray-400 space-y-0.5">
+            <div className="text-xs text-gray-500 space-y-0.5">
               <div>Model: {readU16LE(regs, 3)}</div>
               <div>Return Delay: {regs[7]} us</div>
               <div>Response Status: {regs[8]}</div>
@@ -726,10 +874,10 @@ function ServoCard({ id }: { id: number }) {
             </div>
           )}
         </div>
-      </Section>
+      </Section>}
 
-      {/* ── Section: Backup / Restore ── */}
-      <Section title="Backup / Restore">
+      {/* ── Section: Backup / Restore (Expert only) ── */}
+      {isExpert && <Section title="Backup / Restore">
         <div className="space-y-2">
           <button onClick={handleBackup} className="btn-secondary text-xs">
             Download Backup (JSON)
@@ -757,31 +905,31 @@ function ServoCard({ id }: { id: number }) {
             >
               {resetting ? 'Resetting...' : 'Reset to Factory Defaults'}
             </button>
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-gray-500 mt-1">
               Writes all EEPROM registers (6–39) to ST3215 factory values. Servo ID is preserved.
             </p>
           </div>
           {backupMsg && <p className="text-xs text-gray-600">{backupMsg}</p>}
         </div>
-      </Section>
+      </Section>}
 
-      {/* ── Section: Registers ── */}
-      <Section title="Registers">
+      {/* ── Section: Registers (Expert only) ── */}
+      {isExpert && <Section title="Registers">
         <div className="space-y-2">
           <div className="flex gap-2 items-center">
             <button onClick={loadRegisters} disabled={regsLoading} className="btn-secondary text-xs">
               {regsLoading ? 'Reading...' : 'Refresh Registers'}
             </button>
-            <span className="text-xs text-gray-400">
-              <span className="text-blue-400">EPROM</span> = persistent &nbsp;
-              <span className="text-amber-400">SRAM</span> = volatile
+            <span className="text-xs text-gray-500">
+              <span className="text-blue-500">EPROM</span> = persistent &nbsp;
+              <span className="text-amber-500">SRAM</span> = volatile
             </span>
           </div>
           {regs && (
             <div className="overflow-x-auto">
               <table className="text-xs font-mono w-full">
                 <thead>
-                  <tr className="text-left text-gray-400 border-b border-gray-200">
+                  <tr className="text-left text-gray-500 border-b border-gray-200">
                     <th className="pr-1 py-1 w-8">Addr</th>
                     <th className="pr-1 py-1 w-10">Hex</th>
                     <th className="pr-1 py-1 w-16">Value</th>
@@ -798,13 +946,13 @@ function ServoCard({ id }: { id: number }) {
                     const val = info.bytes === 2 ? readU16LE(regs, addr) : (regs[addr] ?? 0)
                     const editVal = editRegs[addr]
                     const hasEdit = editVal !== undefined && editVal !== ''
-                    const storageColor = isEprom ? 'text-blue-400' : 'text-amber-400'
+                    const storageColor = isEprom ? 'text-blue-500' : 'text-amber-500'
                     const rangeStr = info.min !== undefined ? `${info.min}–${info.max}` : ''
                     const unitStr = info.unit ? ` ${info.unit}` : ''
 
                     return (
                       <tr key={addr} className="border-t border-gray-50 hover:bg-gray-50">
-                        <td className="pr-1 py-0.5 text-gray-400">{addr}</td>
+                        <td className="pr-1 py-0.5 text-gray-500">{addr}</td>
                         <td className="pr-1 py-0.5">0x{val.toString(16).padStart(info.bytes === 2 ? 4 : 2, '0')}</td>
                         <td className="pr-1 py-0.5">
                           {isWritable ? (
@@ -823,11 +971,11 @@ function ServoCard({ id }: { id: number }) {
                         </td>
                         <td className="pr-1 py-0.5">
                           <span className={storageColor}>{info.name}</span>
-                          {info.dflt !== undefined && <span className="text-gray-300 ml-1">(def:{info.dflt})</span>}
+                          {info.dflt !== undefined && <span className="text-gray-500 ml-1">(def:{info.dflt})</span>}
                         </td>
-                        <td className="pr-1 py-0.5 text-gray-400 text-[10px] leading-tight" title={info.help}>
+                        <td className="pr-1 py-0.5 text-gray-500 text-[10px] leading-tight" title={info.help}>
                           {info.help}
-                          {rangeStr && <span className="block text-gray-300">[{rangeStr}]{unitStr}</span>}
+                          {rangeStr && <span className="block text-gray-500">[{rangeStr}]{unitStr}</span>}
                         </td>
                         <td className="py-0.5">
                           {isWritable && hasEdit && (
@@ -858,7 +1006,7 @@ function ServoCard({ id }: { id: number }) {
             </div>
           )}
         </div>
-      </Section>
+      </Section>}
     </div>
   )
 }
@@ -932,6 +1080,7 @@ const REGISTER_MAP: Record<number, RegInfo> = {
 // ── Main view ──
 
 export default function ServoControl() {
+  const isExpert = useIsExpert()
   const scannedIds = useServoStore((s) => s.scannedIds)
   const scanning = useServoStore((s) => s.scanning)
   const scan = useServoStore((s) => s.scan)
@@ -971,19 +1120,24 @@ export default function ServoControl() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold">Servo Control</h2>
         <div className="flex items-center gap-2">
-          <input
-            type="number"
-            min={0}
-            max={253}
-            value={manualId}
-            onChange={(e) => setManualId(e.target.value)}
-            placeholder="ID"
-            className="input w-20"
-            onKeyDown={(e) => e.key === 'Enter' && handleAddManual()}
-          />
-          <button onClick={handleAddManual} className="btn-secondary">
-            Add
-          </button>
+          {/* Manual ID input — Expert only */}
+          {isExpert && (
+            <>
+              <input
+                type="number"
+                min={0}
+                max={253}
+                value={manualId}
+                onChange={(e) => setManualId(e.target.value)}
+                placeholder="ID"
+                className="input w-20"
+                onKeyDown={(e) => e.key === 'Enter' && handleAddManual()}
+              />
+              <button onClick={handleAddManual} className="btn-secondary">
+                Add
+              </button>
+            </>
+          )}
           <button onClick={scan} disabled={scanning} className="btn-primary">
             {scanning ? 'Scanning...' : 'Scan Bus'}
           </button>
@@ -1012,7 +1166,7 @@ export default function ServoControl() {
 
       {scannedIds.length === 0 && !scanning && (
         <div className="text-center text-gray-500 py-12">
-          No servos found. Click &quot;Scan Bus&quot; or add a servo ID manually.
+          No servos found. Click &quot;Scan Bus&quot; to find connected servos.
         </div>
       )}
 
@@ -1023,39 +1177,43 @@ export default function ServoControl() {
         ))}
       </div>
 
-      {/* ── PWM Servos ── */}
-      <div className="mt-8 pt-6 border-t border-gray-200">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-xl font-bold">PWM Servos</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Manually configured PWM servos · LEDC 50Hz · 14-bit
-            </p>
+      {/* ── PWM Servos (Expert only) ── */}
+      {isExpert && (
+        <div className="mt-8 pt-6 border-t border-gray-200">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-bold">PWM Servos</h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Manually configured PWM servos · LEDC 50Hz · 14-bit
+              </p>
+            </div>
+            <button onClick={() => setShowAddPwm(true)} className="btn-primary">
+              Add PWM Servo
+            </button>
           </div>
-          <button onClick={() => setShowAddPwm(true)} className="btn-primary">
-            Add PWM Servo
-          </button>
-        </div>
 
-        {pwmServos.length === 0 && !pwmLoading && (
-          <div className="text-center text-gray-500 py-8 bg-gray-50 rounded-lg">
-            No PWM servos configured. Click &quot;Add PWM Servo&quot; to add one.
+          {pwmServos.length === 0 && !pwmLoading && (
+            <div className="text-center text-gray-500 py-8 bg-gray-50 rounded-lg">
+              No PWM servos configured. Click &quot;Add PWM Servo&quot; to add one.
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {pwmServos.map((srv) => (
+              <PwmServoCard key={srv.channel} servo={srv} />
+            ))}
           </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {pwmServos.map((srv) => (
-            <PwmServoCard key={srv.channel} servo={srv} />
-          ))}
         </div>
-      </div>
+      )}
 
       {/* Add PWM Servo Dialog */}
-      <AddPwmServoDialog
-        open={showAddPwm}
-        onClose={() => setShowAddPwm(false)}
-        nodeIds={[]}
-      />
+      {isExpert && (
+        <AddPwmServoDialog
+          open={showAddPwm}
+          onClose={() => setShowAddPwm(false)}
+          nodeIds={[]}
+        />
+      )}
     </div>
   )
 }

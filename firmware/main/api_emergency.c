@@ -29,7 +29,16 @@ static esp_err_t handle_emergency_stop(httpd_req_t *req)
     bool any_stopped = false;
     cJSON *results = cJSON_CreateArray();
 
-    /* Iterate ALL plugins that might have servos and send emergency_stop */
+    /* Iterate ALL plugins that might have servos and send emergency_stop.
+     *
+     * IMPORTANT: We call p->handle_command() DIRECTLY, bypassing
+     * sb_plugin_dispatch().  This is intentional:
+     *   1. E-stop must iterate ALL plugins in a tight loop — dispatch
+     *      does per-name lookup which adds overhead we don't need.
+     *   2. E-stop has its own dedicated timing below (100ms deadline).
+     *   3. The command watchdog in sb_plugin_dispatch() is monitoring-only
+     *      and would not interfere, but we skip it for clarity.
+     * See also: the cross-reference comment in plugin_manager.c. */
     uint8_t plugin_count = sb_plugin_count();
     for (uint8_t i = 0; i < plugin_count; i++) {
         sb_plugin_t *p = sb_plugin_get(i);

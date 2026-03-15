@@ -3,7 +3,7 @@
  * Task: PWM Servo Support
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { usePwmServoStore } from '../stores/pwmServo'
 import type { PwmServoConfig } from '../api/client'
 
@@ -35,6 +35,55 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
   const [pullDown, setPullDown] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Focus trap + Escape handler (WCAG 2.1.2 / 2.4.3)
+  useEffect(() => {
+    if (!open) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key === 'Tab') {
+        const dialog = dialogRef.current
+        if (!dialog) return
+        const focusable = dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
+      }
+    }
+
+    // Auto-focus first input when dialog opens
+    const timer = setTimeout(() => {
+      const dialog = dialogRef.current
+      if (dialog) {
+        const first = dialog.querySelector<HTMLElement>('input, select, textarea')
+        first?.focus()
+      }
+    }, 0)
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      clearTimeout(timer)
+    }
+  }, [open, onClose])
 
   // Determine next available channel
   const nextChannel = useMemo(() => {
@@ -111,11 +160,17 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-pwm-dialog-title"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div ref={dialogRef} className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
         <form onSubmit={handleSubmit}>
           <div className="px-6 py-4 border-b border-gray-200">
-            <h3 className="text-lg font-semibold">Add PWM Servo</h3>
+            <h3 id="add-pwm-dialog-title" className="text-lg font-semibold">Add PWM Servo</h3>
             <p className="text-xs text-gray-500 mt-1">
               Channel {nextChannel >= 0 ? nextChannel : 'none available'} · 50 Hz · 14-bit
             </p>
@@ -143,6 +198,7 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
                 <button
                   type="button"
                   onClick={() => setControllerType('esp32')}
+                  aria-pressed={controllerType === 'esp32'}
                   className={`flex-1 px-3 py-2 rounded-md text-sm font-medium border transition-colors ${
                     controllerType === 'esp32'
                       ? 'bg-servo-100 border-servo-300 text-servo-700'
@@ -154,6 +210,7 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
                 <button
                   type="button"
                   onClick={() => setControllerType('klipper')}
+                  aria-pressed={controllerType === 'klipper'}
                   className={`flex-1 px-3 py-2 rounded-md text-sm font-medium border transition-colors ${
                     controllerType === 'klipper'
                       ? 'bg-servo-100 border-servo-300 text-servo-700'
@@ -189,7 +246,7 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     GPIO Pin
-                    <span className="text-xs text-gray-400 ml-1">(PWM-capable)</span>
+                    <span className="text-xs text-gray-500 ml-1">(PWM-capable)</span>
                   </label>
                   <select
                     value={pin}
@@ -205,7 +262,7 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
                       )
                     })}
                   </select>
-                  <p className="text-[10px] text-gray-400 mt-1">
+                  <p className="text-[10px] text-gray-500 mt-1">
                     Input-only: {ESP32_INPUT_ONLY.join(', ')} · Reserved: {ESP32_RESERVED.join(', ')}
                   </p>
                 </div>
@@ -226,7 +283,7 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
                   className="input w-full"
                   required={controllerType === 'klipper'}
                 />
-                <p className="text-[10px] text-gray-400 mt-1">
+                <p className="text-[10px] text-gray-500 mt-1">
                   Must match [servo ...] section in printer.cfg
                 </p>
               </div>
@@ -301,7 +358,7 @@ export default function AddPwmServoDialog({ open, onClose, nodeIds }: Props) {
             )}
 
             {error && (
-              <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{error}</div>
+              <div role="alert" className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{error}</div>
             )}
           </div>
 

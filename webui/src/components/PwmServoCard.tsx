@@ -55,12 +55,12 @@ export default function PwmServoCard({ servo }: Props) {
       : `ESP32 (${servo.node_id || '?'})`
 
   return (
-    <div className="border border-gray-200 rounded-lg p-4 bg-white">
+    <div className="border border-gray-200 rounded-lg p-4 bg-white" role="group" aria-label={`PWM Servo ${servo.name}`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="font-semibold text-sm">{servo.name}</h3>
-          <span className="text-xs text-gray-400 font-mono">
+          <span className="text-xs text-gray-500 font-mono">
             CH{servo.channel} · GPIO {servo.pin} · {controllerLabel}
           </span>
         </div>
@@ -68,6 +68,8 @@ export default function PwmServoCard({ servo }: Props) {
           <button
             onClick={() => setShowConfig(!showConfig)}
             className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+            aria-expanded={showConfig}
+            aria-label={`${showConfig ? 'Hide' : 'Show'} config for ${servo.name}`}
           >
             {showConfig ? 'Hide' : 'Config'}
           </button>
@@ -78,6 +80,7 @@ export default function PwmServoCard({ servo }: Props) {
                 ? 'bg-red-600 text-white'
                 : 'text-red-500 hover:text-red-700 hover:bg-red-50'
             }`}
+            aria-label={confirming ? `Confirm removal of ${servo.name}` : `Remove ${servo.name}`}
           >
             {confirming ? 'Confirm?' : 'Remove'}
           </button>
@@ -97,8 +100,12 @@ export default function PwmServoCard({ servo }: Props) {
           value={position}
           onChange={handleSlider}
           className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-servo-600"
+          aria-label={`Position for ${servo.name}`}
+          aria-valuemin={0}
+          aria-valuemax={1000}
+          aria-valuenow={position}
         />
-        <div className="flex justify-between text-[10px] text-gray-400">
+        <div className="flex justify-between text-[10px] text-gray-500">
           <span>0</span>
           <span>500</span>
           <span>1000</span>
@@ -115,6 +122,7 @@ export default function PwmServoCard({ servo }: Props) {
               setPosition(servo.channel, pos)
             }}
             className="flex-1 text-xs py-1 rounded bg-gray-100 hover:bg-servo-100 text-gray-600 hover:text-servo-700 transition-colors"
+            aria-label={`Set ${servo.name} to position ${pos}`}
           >
             {pos}
           </button>
@@ -125,17 +133,17 @@ export default function PwmServoCard({ servo }: Props) {
       {showConfig && (
         <div className="mt-3 pt-3 border-t border-gray-100 space-y-1 text-xs text-gray-600">
           <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <span className="text-gray-400">Pulse Range</span>
+            <span className="text-gray-500">Pulse Range</span>
             <span className="font-mono">{pulseRange}</span>
-            <span className="text-gray-400">Controller</span>
+            <span className="text-gray-500">Controller</span>
             <span>{servo.controller_type}</span>
-            <span className="text-gray-400">GPIO Pin</span>
+            <span className="text-gray-500">GPIO Pin</span>
             <span className="font-mono">{servo.pin}</span>
-            <span className="text-gray-400">Invert</span>
+            <span className="text-gray-500">Invert</span>
             <span>{servo.invert ? 'Yes' : 'No'}</span>
-            <span className="text-gray-400">Pull Up</span>
+            <span className="text-gray-500">Pull Up</span>
             <span>{servo.pull_up ? 'Yes' : 'No'}</span>
-            <span className="text-gray-400">Pull Down</span>
+            <span className="text-gray-500">Pull Down</span>
             <span>{servo.pull_down ? 'Yes' : 'No'}</span>
           </div>
         </div>

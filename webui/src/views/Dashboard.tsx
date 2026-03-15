@@ -54,7 +54,7 @@ export default function Dashboard() {
           <div className="text-lg font-semibold">
             {info ? formatBytes(info.free_heap) : '—'}
           </div>
-          <div className="text-xs text-gray-400">
+          <div className="text-xs text-gray-500">
             min: {info ? formatBytes(info.min_free_heap) : '—'}
           </div>
         </div>
@@ -64,7 +64,7 @@ export default function Dashboard() {
           <div className="text-lg font-semibold">
             {info?.display_name || 'Arbor'}
           </div>
-          <div className="text-xs text-gray-400">
+          <div className="text-xs text-gray-500">
             {info?.board_id ? `ID: ${info.board_id}` : ''}
           </div>
         </div>
@@ -79,7 +79,7 @@ export default function Dashboard() {
               {wsConnected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
-          <div className="text-xs text-gray-400">
+          <div className="text-xs text-gray-500">
             {info ? `${info.ws_clients} client(s)` : ''}
           </div>
         </div>
@@ -133,7 +133,7 @@ export default function Dashboard() {
                     }`}
                   />
                   <span className="font-medium">{p.name}</span>
-                  <span className="text-gray-400">v{p.version}</span>
+                  <span className="text-gray-500">v{p.version}</span>
                 </div>
                 <span className="text-gray-500 capitalize">{p.health}</span>
               </div>

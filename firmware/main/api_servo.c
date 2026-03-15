@@ -67,7 +67,16 @@ static esp_err_t handle_servo_state(httpd_req_t *req, int servo_id)
     return ret;
 }
 
-/* PUT /api/v1/servo/{id}/position */
+/* PUT /api/v1/servo/{id}/position
+ *
+ * Body: { "position": 2048 }                     — move at max speed
+ *   or: { "position": 2048, "speed": 500 }       — move with speed limit
+ *   or: { "position": 2048, "time": 1000 }       — arrive in 1000ms
+ *   or: { "position": 2048, "time": 1000, "speed": 500 }  — both
+ *
+ * When speed or time is provided, the firmware writes registers 42-47
+ * (position + time + speed) atomically in one bus transaction.
+ */
 static esp_err_t handle_servo_position(httpd_req_t *req, int servo_id)
 {
     sb_auth_result_t auth;
@@ -87,10 +96,24 @@ static esp_err_t handle_servo_position(httpd_req_t *req, int servo_id)
         return sb_json_error(req, "400 Bad Request", "Missing position field");
     }
 
+    /* Extract required + optional fields into locals before freeing body */
+    int pos_val = position->valueint;
+
+    const cJSON *speed_j = cJSON_GetObjectItem(body, "speed");
+    const cJSON *time_j  = cJSON_GetObjectItem(body, "time");
+    int speed_val = (speed_j && cJSON_IsNumber(speed_j)) ? speed_j->valueint : 0;
+    int time_val  = (time_j && cJSON_IsNumber(time_j))   ? time_j->valueint  : 0;
+    cJSON_Delete(body);
+
     cJSON *params = cJSON_CreateObject();
     cJSON_AddNumberToObject(params, "id", servo_id);
-    cJSON_AddNumberToObject(params, "position", position->valueint);
-    cJSON_Delete(body);
+    cJSON_AddNumberToObject(params, "position", pos_val);
+    if (speed_val > 0) {
+        cJSON_AddNumberToObject(params, "speed", speed_val);
+    }
+    if (time_val > 0) {
+        cJSON_AddNumberToObject(params, "time", time_val);
+    }
 
     cJSON *result = sb_plugin_dispatch("servo-bus", "set_position", params);
     cJSON_Delete(params);

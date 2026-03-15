@@ -32,6 +32,7 @@ logger = structlog.get_logger(__name__)
 # Paths that do NOT require authentication
 _PUBLIC_PATHS: frozenset[str] = frozenset(
     {
+        "/health",
         "/api/v1/health",
         "/api/docs",
         "/api/redoc",
@@ -171,6 +172,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Public paths bypass auth entirely
         if self._is_public(path):
             request.state.auth = AuthState()
+            return await call_next(request)
+
+        # Provisioning mode: no API keys configured yet — allow all requests.
+        # Mirrors firmware behavior (api_auth.c): once any key is created,
+        # auth is enforced. Until then, the system is open for initial setup.
+        if self._api_key_mgr.key_count == 0:
+            logger.warning(
+                "auth_provisioning_mode",
+                path=path,
+                hint="No API keys exist. Create one via POST /api/v1/auth/api-keys to enable auth.",
+            )
+            request.state.auth = AuthState(
+                authenticated=True,
+                auth_type="provisioning",
+                subject="provisioning",
+                scopes=["admin"],
+            )
             return await call_next(request)
 
         # Extract and verify credentials

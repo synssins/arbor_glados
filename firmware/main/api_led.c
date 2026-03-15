@@ -12,6 +12,7 @@
 #include "json_util.h"
 #include "led_ws2812.h"
 
+#include <stdbool.h>
 #include "esp_log.h"
 #include "cJSON.h"
 
@@ -47,13 +48,15 @@ static esp_err_t handle_led_identify(httpd_req_t *req)
         return sb_json_error(req, "400 Bad Request", "Missing or invalid 'enabled' field (bool)");
     }
 
-    if (cJSON_IsTrue(enabled)) {
+    /* Save value before freeing body — enabled is a child of body */
+    const bool is_enabled = cJSON_IsTrue(enabled);
+    cJSON_Delete(body);
+
+    if (is_enabled) {
         sb_led_identify_start();
     } else {
         sb_led_identify_stop();
     }
-
-    cJSON_Delete(body);
 
     cJSON *resp = cJSON_CreateObject();
     if (resp == NULL) {
@@ -81,7 +84,10 @@ static esp_err_t handle_led_flash(httpd_req_t *req)
         return sb_json_error(req, "400 Bad Request", "Missing or invalid 'on' field (bool)");
     }
 
-    if (cJSON_IsTrue(on)) {
+    /* Save value before freeing body — on is a child of body */
+    const bool is_on = cJSON_IsTrue(on);
+
+    if (is_on) {
         sb_led_flash_on();
     } else {
         sb_led_flash_off();
@@ -94,7 +100,7 @@ static esp_err_t handle_led_flash(httpd_req_t *req)
         return sb_json_error(req, "500 Internal Server Error", "OOM");
     }
 
-    cJSON_AddStringToObject(resp, "detail", cJSON_IsTrue(on) ? "Flash on" : "Flash off");
+    cJSON_AddStringToObject(resp, "detail", is_on ? "Flash on" : "Flash off");
 
     esp_err_t ret = sb_json_respond(req, "200 OK", resp);
     cJSON_Delete(resp);

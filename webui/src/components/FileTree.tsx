@@ -50,7 +50,7 @@ function formatSize(bytes: number): string {
 
 export default function FileTree({ items, currentPath, onNavigate, onOpenFile, openFilePath }: Props) {
   return (
-    <div className="text-sm">
+    <div className="text-sm" role="list" aria-label="File browser">
       {/* Parent directory link */}
       {currentPath && (
         <button
@@ -60,6 +60,8 @@ export default function FileTree({ items, currentPath, onNavigate, onOpenFile, o
             onNavigate(parts.join('/'))
           }}
           className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-gray-100 rounded text-gray-500"
+          role="listitem"
+          aria-label="Navigate to parent directory"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M11 17l-5-5m0 0l5-5m-5 5h12" />
@@ -75,6 +77,9 @@ export default function FileTree({ items, currentPath, onNavigate, onOpenFile, o
         return (
           <button
             key={item.name}
+            role="listitem"
+            aria-label={item.type === 'directory' ? `Open folder ${item.name}` : `Open file ${item.name}`}
+            aria-current={isOpen ? 'true' : undefined}
             onClick={() => {
               if (item.type === 'directory') {
                 onNavigate(fullPath)
@@ -91,14 +96,14 @@ export default function FileTree({ items, currentPath, onNavigate, onOpenFile, o
             <FileIcon type={item.type} name={item.name} />
             <span className="flex-1 truncate">{item.name}</span>
             {item.type === 'file' && item.size > 0 && (
-              <span className="text-xs text-gray-400 flex-shrink-0">{formatSize(item.size)}</span>
+              <span className="text-xs text-gray-500 flex-shrink-0">{formatSize(item.size)}</span>
             )}
           </button>
         )
       })}
 
       {items.length === 0 && (
-        <p className="text-gray-400 text-xs px-2 py-4 text-center">Empty directory</p>
+        <p className="text-gray-500 text-xs px-2 py-4 text-center">Empty directory</p>
       )}
     </div>
   )

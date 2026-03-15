@@ -30,6 +30,7 @@ echo "=== Step 2: Generating SPIFFS image ==="
 WEBUI_DIR="/project/webui_files"
 SPIFFS_SIZE=$((0x5F000))  # Must match partitions.csv spiffs size
 SPIFFS_IMG="build/spiffs.bin"
+WEBUI_GZ_DIR="build/webui_gz"
 
 if [ ! -d "$WEBUI_DIR" ]; then
     echo "ERROR: WebUI files not found at $WEBUI_DIR"
@@ -37,13 +38,31 @@ if [ ! -d "$WEBUI_DIR" ]; then
     exit 1
 fi
 
-echo "WebUI files:"
+echo "Original WebUI files:"
 find "$WEBUI_DIR" -type f -exec ls -la {} \;
 
-# Use spiffsgen.py from ESP-IDF
+# Pre-compress WebUI files with gzip for SPIFFS (saves ~70% space)
+echo "Pre-compressing WebUI files..."
+rm -rf "$WEBUI_GZ_DIR"
+mkdir -p "$WEBUI_GZ_DIR"
+
+# Copy directory structure and gzip all files
+find "$WEBUI_DIR" -type d | while read dir; do
+    rel="${dir#$WEBUI_DIR}"
+    mkdir -p "$WEBUI_GZ_DIR$rel"
+done
+find "$WEBUI_DIR" -type f | while read file; do
+    rel="${file#$WEBUI_DIR}"
+    gzip -9 -c "$file" > "$WEBUI_GZ_DIR${rel}.gz"
+done
+
+echo "Compressed WebUI files:"
+find "$WEBUI_GZ_DIR" -type f -exec ls -la {} \;
+
+# Use spiffsgen.py from ESP-IDF (pack pre-compressed files)
 python $IDF_PATH/components/spiffs/spiffsgen.py \
     $SPIFFS_SIZE \
-    "$WEBUI_DIR" \
+    "$WEBUI_GZ_DIR" \
     "$SPIFFS_IMG" \
     --page-size 256 \
     --block-size 4096

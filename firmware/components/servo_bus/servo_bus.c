@@ -20,6 +20,9 @@
 #include "esp_timer.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "cJSON.h"
 
 static const char *TAG = "servo_bus";
@@ -43,6 +46,7 @@ static const char *TAG = "servo_bus";
 #define STS_REG_MODE            33  /* 1 byte, EEPROM: 0=pos, 1=speed, 2=PWM, 3=step */
 #define STS_REG_TORQUE_ENABLE   40
 #define STS_REG_GOAL_POSITION   42  /* 2 bytes */
+#define STS_REG_GOAL_TIME       44  /* 2 bytes, ms — time to reach goal position */
 #define STS_REG_GOAL_SPEED      46  /* 2 bytes */
 #define STS_REG_TORQUE_LIMIT    48  /* 2 bytes, SRAM */
 #define STS_REG_LOCK            55  /* 1 byte, SRAM: 0=unlock EEPROM, 1=lock */
@@ -73,10 +77,46 @@ typedef struct {
     uint8_t servo_ids[MAX_BUS_SERVOS];
     uint8_t servo_count;
     sb_servo_state_t servo_states[MAX_BUS_SERVOS];
+    SemaphoreHandle_t bus_mutex;  /* Protects all UART bus access */
+    volatile bool abort_scan;     /* E-stop sets this to abort in-progress scan */
+    volatile bool scan_in_progress; /* True while async scan task is running */
 } servo_bus_ctx_t;
 
 static servo_bus_ctx_t s_ctx;
 static sb_plugin_t s_plugin;
+
+/* ── Bus Mutex ── */
+
+/**
+ * Acquire exclusive access to the UART bus.
+ * Uses FreeRTOS mutex with priority inheritance to prevent priority inversion.
+ * Returns true if lock acquired, false on timeout.
+ */
+static bool bus_lock(TickType_t timeout)
+{
+    if (s_ctx.bus_mutex == NULL) return true; /* pre-init fallback */
+    return xSemaphoreTake(s_ctx.bus_mutex, timeout) == pdTRUE;
+}
+
+/**
+ * Release exclusive access to the UART bus.
+ */
+static void bus_unlock(void)
+{
+    if (s_ctx.bus_mutex != NULL) {
+        xSemaphoreGive(s_ctx.bus_mutex);
+    }
+}
+
+/* Default timeout for bus operations (covers scan: 254 pings × ~30ms worst case) */
+#define BUS_LOCK_TIMEOUT_MS   10000
+/* Short timeout for health check — don't block diagnostics on long ops */
+#define BUS_HEALTH_TIMEOUT_MS 100
+/* E-stop timeout — scan releases lock within one ping cycle (~30ms) */
+#define BUS_ESTOP_TIMEOUT_MS  500
+/* Async scan task configuration */
+#define SCAN_TASK_STACK_SIZE  4096
+#define SCAN_TASK_PRIORITY    (tskIDLE_PRIORITY + 1)
 
 /* ── Low-Level Protocol ── */
 
@@ -299,11 +339,36 @@ static esp_err_t read_servo_state(uint8_t id, sb_servo_state_t *state)
 }
 
 /**
- * Set goal position for a servo.
+ * Set goal position for a servo (position only).
  */
 static esp_err_t set_position(uint8_t id, uint16_t position)
 {
     return write_u16(id, STS_REG_GOAL_POSITION, position);
+}
+
+/**
+ * Set goal position with optional time and speed — atomic 6-byte write.
+ *
+ * ST3215 registers 42-47 are contiguous:
+ *   42-43: Goal Position (0-4095)
+ *   44-45: Goal Time     (ms, 0 = use speed instead)
+ *   46-47: Goal Speed    (0-4095 steps/s, 0 = max speed)
+ *
+ * Writing all three atomically in one bus packet ensures the servo
+ * applies position+time+speed together.  If only position is given
+ * (time=0, speed=0), the servo moves at max speed.
+ */
+static esp_err_t set_position_ext(uint8_t id, uint16_t position,
+                                   uint16_t time_ms, uint16_t speed)
+{
+    uint8_t data[6];
+    data[0] = (uint8_t)(position & 0xFF);
+    data[1] = (uint8_t)((position >> 8) & 0xFF);
+    data[2] = (uint8_t)(time_ms & 0xFF);
+    data[3] = (uint8_t)((time_ms >> 8) & 0xFF);
+    data[4] = (uint8_t)(speed & 0xFF);
+    data[5] = (uint8_t)((speed >> 8) & 0xFF);
+    return write_registers(id, STS_REG_GOAL_POSITION, data, 6);
 }
 
 /**
@@ -324,7 +389,8 @@ static esp_err_t set_torque(uint8_t id, bool enable)
 }
 
 /**
- * Sync write: write same register to multiple servos in one packet.
+ * Sync write position only — 2 bytes per servo starting at reg 42.
+ * Used when no speed/time parameters are provided (backward compatible).
  */
 static esp_err_t sync_write_positions(const uint8_t *ids, const uint16_t *positions,
                                       uint8_t count)
@@ -337,6 +403,9 @@ static esp_err_t sync_write_positions(const uint8_t *ids, const uint16_t *positi
     uint8_t data_len = 2; /* bytes per servo (position is 2 bytes) */
     uint8_t param_count = (count * (data_len + 1)) + 2; /* +2 for start_addr and data_len */
     uint8_t total_len = param_count + 2; /* instruction + params + checksum */
+
+    /* Safety: check packet won't overflow buffer */
+    if (7 + count * (data_len + 1) > sizeof(pkt) - 1) return ESP_ERR_INVALID_ARG;
 
     pkt[0] = STS_HEADER_0;
     pkt[1] = STS_HEADER_1;
@@ -351,6 +420,53 @@ static esp_err_t sync_write_positions(const uint8_t *ids, const uint16_t *positi
         pkt[idx++] = ids[i];
         pkt[idx++] = (uint8_t)(positions[i] & 0xFF);
         pkt[idx++] = (uint8_t)((positions[i] >> 8) & 0xFF);
+    }
+    pkt[idx] = compute_checksum(pkt, idx);
+
+    uart_flush_input(UART_NUM);
+    return bus_send(pkt, idx + 1);
+}
+
+/**
+ * Sync write position + time + speed — 6 bytes per servo starting at reg 42.
+ * All three params are applied atomically per servo in one bus transaction.
+ *
+ * Registers per servo: Position(2) + Time(2) + Speed(2) = 6 bytes.
+ */
+static esp_err_t sync_write_positions_ext(const uint8_t *ids,
+                                           const uint16_t *positions,
+                                           const uint16_t *times,
+                                           const uint16_t *speeds,
+                                           uint8_t count)
+{
+    if (count == 0 || count > MAX_BUS_SERVOS) return ESP_ERR_INVALID_ARG;
+
+    uint8_t pkt[256];
+    uint8_t data_len = 6; /* position(2) + time(2) + speed(2) per servo */
+    uint8_t param_count = (count * (data_len + 1)) + 2;
+    uint8_t total_len = param_count + 2;
+
+    /* Safety: check packet won't overflow buffer.
+     * Max: 7 header + 32 servos × 7 bytes = 7 + 224 = 231 — fits in 256. */
+    if (7 + count * (data_len + 1) > sizeof(pkt) - 1) return ESP_ERR_INVALID_ARG;
+
+    pkt[0] = STS_HEADER_0;
+    pkt[1] = STS_HEADER_1;
+    pkt[2] = 0xFE; /* Broadcast ID */
+    pkt[3] = total_len;
+    pkt[4] = STS_INST_SYNC_WRITE;
+    pkt[5] = STS_REG_GOAL_POSITION;
+    pkt[6] = data_len;
+
+    uint8_t idx = 7;
+    for (uint8_t i = 0; i < count; i++) {
+        pkt[idx++] = ids[i];
+        pkt[idx++] = (uint8_t)(positions[i] & 0xFF);
+        pkt[idx++] = (uint8_t)((positions[i] >> 8) & 0xFF);
+        pkt[idx++] = (uint8_t)(times[i] & 0xFF);
+        pkt[idx++] = (uint8_t)((times[i] >> 8) & 0xFF);
+        pkt[idx++] = (uint8_t)(speeds[i] & 0xFF);
+        pkt[idx++] = (uint8_t)((speeds[i] >> 8) & 0xFF);
     }
     pkt[idx] = compute_checksum(pkt, idx);
 
@@ -376,6 +492,10 @@ static esp_err_t emergency_stop_all(void)
 
 /**
  * Scan the bus for connected servos (ping IDs 0-253).
+ *
+ * Acquires/releases bus mutex per-ping so E-stop can interleave.
+ * Checks abort_scan between each ping for cooperative cancellation.
+ * Called from scan_bus_task() on a dedicated FreeRTOS task — NOT from httpd.
  */
 static cJSON *scan_bus(void)
 {
@@ -383,12 +503,74 @@ static cJSON *scan_bus(void)
     if (arr == NULL) return NULL;
 
     for (uint8_t id = 0; id < 254; id++) {
-        if (ping_servo(id)) {
+        /* Check abort flag before each ping — allows E-stop to cancel scan */
+        if (s_ctx.abort_scan) {
+            ESP_LOGW(TAG, "Scan aborted at ID %d", id);
+            break;
+        }
+
+        /* Acquire/release mutex per-ping so E-stop can interleave.
+         * Holding the lock for the entire 254-ping scan would block
+         * E-stop for ~8 seconds — violating the 100ms deadline. */
+        if (!bus_lock(pdMS_TO_TICKS(1000))) {
+            ESP_LOGW(TAG, "Scan: lock timeout at ID %d, skipping", id);
+            continue;
+        }
+        bool found = ping_servo(id);
+        bus_unlock();
+
+        if (found) {
             cJSON_AddItemToArray(arr, cJSON_CreateNumber(id));
             ESP_LOGI(TAG, "Found servo at ID %d", id);
         }
+
+        /* Yield between pings — lets httpd process E-stop and other requests */
+        vTaskDelay(1);
     }
     return arr;
+}
+
+/**
+ * FreeRTOS task: runs bus scan asynchronously.
+ *
+ * Decoupled from the httpd thread so E-stop requests can be processed
+ * during the scan.  Publishes results via event bus (WebSocket delivery).
+ */
+static void scan_bus_task(void *arg)
+{
+    (void)arg;
+
+    cJSON *found = scan_bus();
+    int count = found ? cJSON_GetArraySize(found) : 0;
+    bool was_aborted = s_ctx.abort_scan;
+
+    /* Publish result via event bus — WebUI receives via WebSocket */
+    cJSON *ev_obj = cJSON_CreateObject();
+    if (ev_obj) {
+        /* Transfer found array into event object (ownership moves) */
+        cJSON_AddItemToObject(ev_obj, "found_ids",
+                              found ? found : cJSON_CreateArray());
+        found = NULL; /* ownership transferred */
+        cJSON_AddNumberToObject(ev_obj, "count", count);
+        cJSON_AddBoolToObject(ev_obj, "aborted", was_aborted);
+
+        char *json_str = cJSON_PrintUnformatted(ev_obj);
+        if (json_str) {
+            sb_event_publish("servo.scan_complete", json_str);
+            cJSON_free(json_str);
+        }
+        cJSON_Delete(ev_obj);
+    } else if (found) {
+        cJSON_Delete(found);
+    }
+
+    ESP_LOGI(TAG, "Scan complete: %d servos found%s", count,
+             was_aborted ? " (aborted)" : "");
+
+    s_ctx.abort_scan = false;
+    s_ctx.scan_in_progress = false;
+
+    vTaskDelete(NULL);
 }
 
 /* ── Plugin Interface ── */
@@ -398,9 +580,18 @@ static esp_err_t plugin_init(sb_plugin_t *self, const cJSON *config)
     (void)self;
     memset(&s_ctx, 0, sizeof(s_ctx));
 
+    /* Create bus mutex before any UART operations */
+    s_ctx.bus_mutex = xSemaphoreCreateMutex();
+    if (s_ctx.bus_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create bus mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     const sb_config_t *app_cfg = sb_config_get();
     if (app_cfg == NULL) {
         ESP_LOGE(TAG, "No app config — cannot initialize servo bus");
+        vSemaphoreDelete(s_ctx.bus_mutex);
+        s_ctx.bus_mutex = NULL;
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -478,18 +669,43 @@ static esp_err_t plugin_shutdown(sb_plugin_t *self)
 {
     (void)self;
     if (s_ctx.initialized) {
-        /* Disable torque on all servos before shutting down */
-        emergency_stop_all();
-        uart_driver_delete(UART_NUM);
+        /* Abort any in-progress scan and wait for it to finish */
+        if (s_ctx.scan_in_progress) {
+            s_ctx.abort_scan = true;
+            ESP_LOGI(TAG, "Waiting for scan to abort before shutdown...");
+            for (int i = 0; i < 50 && s_ctx.scan_in_progress; i++) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+            if (s_ctx.scan_in_progress) {
+                ESP_LOGW(TAG, "Scan did not finish in time — proceeding with shutdown");
+            }
+        }
+
+        /* Disable torque on all servos before shutting down.
+         * Lock the bus for the entire shutdown sequence. */
+        if (bus_lock(pdMS_TO_TICKS(BUS_LOCK_TIMEOUT_MS))) {
+            emergency_stop_all();
+            uart_driver_delete(UART_NUM);
+            bus_unlock();
+        } else {
+            ESP_LOGE(TAG, "Could not acquire bus lock for shutdown — forcing UART delete");
+            uart_driver_delete(UART_NUM);
+        }
+        if (s_ctx.bus_mutex != NULL) {
+            vSemaphoreDelete(s_ctx.bus_mutex);
+            s_ctx.bus_mutex = NULL;
+        }
         s_ctx.initialized = false;
         ESP_LOGI(TAG, "Servo bus shut down");
     }
     return ESP_OK;
 }
 
-static cJSON *plugin_get_state(sb_plugin_t *self)
+/**
+ * Build state JSON for all servos — caller must already hold bus_mutex.
+ */
+static cJSON *get_state_unlocked(void)
 {
-    (void)self;
     cJSON *state = cJSON_CreateObject();
     if (state == NULL) return NULL;
 
@@ -512,11 +728,69 @@ static cJSON *plugin_get_state(sb_plugin_t *self)
     return state;
 }
 
+static cJSON *plugin_get_state(sb_plugin_t *self)
+{
+    (void)self;
+    if (!bus_lock(pdMS_TO_TICKS(BUS_LOCK_TIMEOUT_MS))) {
+        ESP_LOGW(TAG, "Could not acquire bus lock for get_state");
+        cJSON *empty = cJSON_CreateObject();
+        if (empty) cJSON_AddArrayToObject(empty, "servos");
+        return empty;
+    }
+    cJSON *state = get_state_unlocked();
+    bus_unlock();
+    return state;
+}
+
 static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJSON *params)
 {
     (void)self;
     cJSON *result = cJSON_CreateObject();
     if (result == NULL) return NULL;
+
+    /* ── Emergency stop fast-path ──────────────────────────────────────
+     * E-stop gets its own dedicated path BEFORE the general bus lock.
+     * If a scan is running on the scan task, we signal it to abort first,
+     * then acquire the lock with a short timeout.  The scan releases its
+     * per-ping lock within ~30ms, so E-stop typically waits < 50ms.
+     *
+     * Safety fallback: if the lock STILL times out, we force the stop
+     * without the lock.  Minor UART corruption is acceptable vs. not
+     * stopping the servos.  Hardware safety > mutex correctness. */
+    if (strcmp(cmd, "emergency_stop") == 0) {
+        if (s_ctx.scan_in_progress) {
+            s_ctx.abort_scan = true;
+            ESP_LOGW(TAG, "E-STOP: aborting in-progress scan");
+        }
+
+        if (!bus_lock(pdMS_TO_TICKS(BUS_ESTOP_TIMEOUT_MS))) {
+            ESP_LOGE(TAG, "CRITICAL: Bus lock timeout for E-STOP — forcing stop without lock");
+            emergency_stop_all();
+            cJSON_AddBoolToObject(result, "stopped", true);
+            cJSON_AddBoolToObject(result, "ok", false);
+            cJSON_AddStringToObject(result, "warning",
+                                    "Lock timeout — forced stop without lock");
+            sb_event_publish("servo.emergency_stop",
+                             "{\"stopped\":true,\"forced\":true}");
+            return result;
+        }
+
+        esp_err_t err = emergency_stop_all();
+        bus_unlock();
+
+        cJSON_AddBoolToObject(result, "stopped", true);
+        cJSON_AddBoolToObject(result, "ok", err == ESP_OK);
+        sb_event_publish("servo.emergency_stop", "{\"stopped\":true}");
+        return result;
+    }
+
+    /* Acquire bus mutex for all other commands.
+     * All commands touch the UART — direction pin, TX, RX must be atomic. */
+    if (!bus_lock(pdMS_TO_TICKS(BUS_LOCK_TIMEOUT_MS))) {
+        ESP_LOGE(TAG, "Bus lock timeout for command: %s", cmd);
+        cJSON_AddStringToObject(result, "error", "Bus busy — try again");
+        return result;
+    }
 
     if (strcmp(cmd, "get_state") == 0) {
         int id_val = -1;
@@ -526,8 +800,11 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         }
 
         if (id_val < 0) {
+            /* Lock is already held — use unlocked variant to avoid deadlock */
             cJSON_Delete(result);
-            return plugin_get_state(self);
+            result = get_state_unlocked();
+            bus_unlock();
+            return result;
         }
 
         sb_servo_state_t st;
@@ -547,12 +824,45 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         const cJSON *id_j = cJSON_GetObjectItem(params, "id");
         const cJSON *pos_j = cJSON_GetObjectItem(params, "position");
         if (id_j && pos_j && cJSON_IsNumber(id_j) && cJSON_IsNumber(pos_j)) {
-            esp_err_t err = set_position((uint8_t)id_j->valueint, (uint16_t)pos_j->valueint);
+            uint8_t  servo_id = (uint8_t)id_j->valueint;
+
+            /* Clamp position to valid ST3215 range (0-4095, 12-bit) */
+            int raw_pos = pos_j->valueint;
+            if (raw_pos < 0) raw_pos = 0;
+            if (raw_pos > 4095) raw_pos = 4095;
+            uint16_t position = (uint16_t)raw_pos;
+
+            /* Optional speed and time — if either is provided, use the
+             * atomic 6-byte write (regs 42-47: position+time+speed).
+             * If neither is provided, fall back to simple position-only
+             * write for backward compatibility and minimal bus traffic. */
+            const cJSON *spd_j  = cJSON_GetObjectItem(params, "speed");
+            const cJSON *time_j = cJSON_GetObjectItem(params, "time");
+
+            /* Clamp speed to 0-4095 (ST3215 register range, 0 = max speed)
+             * Clamp time to 0-30000ms (practical upper bound for safety) */
+            int raw_speed = (spd_j && cJSON_IsNumber(spd_j)) ? spd_j->valueint : 0;
+            int raw_time  = (time_j && cJSON_IsNumber(time_j)) ? time_j->valueint : 0;
+            if (raw_speed < 0) raw_speed = 0;
+            if (raw_speed > 4095) raw_speed = 4095;
+            if (raw_time < 0) raw_time = 0;
+            if (raw_time > 30000) raw_time = 30000;
+            uint16_t move_speed = (uint16_t)raw_speed;
+            uint16_t move_time  = (uint16_t)raw_time;
+
+            esp_err_t err;
+            if (move_speed > 0 || move_time > 0) {
+                err = set_position_ext(servo_id, position, move_time, move_speed);
+            } else {
+                err = set_position(servo_id, position);
+            }
+
             cJSON_AddBoolToObject(result, "ok", err == ESP_OK);
             if (err == ESP_OK) {
-                char ev[128];
-                snprintf(ev, sizeof(ev), "{\"id\":%d,\"position\":%d}",
-                         id_j->valueint, pos_j->valueint);
+                char ev[192];
+                snprintf(ev, sizeof(ev),
+                         "{\"id\":%d,\"position\":%d,\"time\":%d,\"speed\":%d}",
+                         servo_id, position, move_time, move_speed);
                 sb_event_publish("servo.position_changed", ev);
             }
         } else {
@@ -584,25 +894,66 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         if (moves != NULL && cJSON_IsArray(moves)) {
             int count = cJSON_GetArraySize(moves);
             if (count > 0 && count <= MAX_BUS_SERVOS) {
-                uint8_t ids[MAX_BUS_SERVOS];
+                uint8_t  ids[MAX_BUS_SERVOS];
                 uint16_t positions[MAX_BUS_SERVOS];
+                uint16_t times[MAX_BUS_SERVOS];
+                uint16_t speeds[MAX_BUS_SERVOS];
                 bool valid = true;
+                bool has_ext = false; /* Any move has speed or time? */
+
                 for (int i = 0; i < count; i++) {
                     cJSON *m = cJSON_GetArrayItem(moves, i);
-                    cJSON *id_item = m ? cJSON_GetObjectItem(m, "id") : NULL;
+                    cJSON *id_item  = m ? cJSON_GetObjectItem(m, "id") : NULL;
                     cJSON *pos_item = m ? cJSON_GetObjectItem(m, "position") : NULL;
                     if (!id_item || !pos_item) { valid = false; break; }
                     ids[i] = (uint8_t)id_item->valueint;
-                    positions[i] = (uint16_t)pos_item->valueint;
+
+                    /* Clamp position to valid ST3215 range (0-4095) */
+                    int raw_p = pos_item->valueint;
+                    if (raw_p < 0) raw_p = 0;
+                    if (raw_p > 4095) raw_p = 4095;
+                    positions[i] = (uint16_t)raw_p;
+
+                    cJSON *time_item  = m ? cJSON_GetObjectItem(m, "time") : NULL;
+                    cJSON *speed_item = m ? cJSON_GetObjectItem(m, "speed") : NULL;
+
+                    /* Clamp speed (0-4095) and time (0-30000ms) */
+                    int raw_s = (speed_item && cJSON_IsNumber(speed_item))
+                                ? speed_item->valueint : 0;
+                    int raw_t = (time_item && cJSON_IsNumber(time_item))
+                                ? time_item->valueint : 0;
+                    if (raw_s < 0) raw_s = 0;
+                    if (raw_s > 4095) raw_s = 4095;
+                    if (raw_t < 0) raw_t = 0;
+                    if (raw_t > 30000) raw_t = 30000;
+                    times[i]  = (uint16_t)raw_t;
+                    speeds[i] = (uint16_t)raw_s;
+                    if (times[i] > 0 || speeds[i] > 0) has_ext = true;
                 }
                 if (!valid) {
                     cJSON_AddStringToObject(result, "error", "Invalid move entry");
+                    bus_unlock();
                     return result;
                 }
-                esp_err_t err = sync_write_positions(ids, positions, (uint8_t)count);
+
+                /* Use the extended 6-byte sync write if any move has
+                 * speed or time, otherwise use the compact 2-byte version. */
+                esp_err_t err;
+                if (has_ext) {
+                    err = sync_write_positions_ext(ids, positions, times,
+                                                   speeds, (uint8_t)count);
+                } else {
+                    err = sync_write_positions(ids, positions, (uint8_t)count);
+                }
+
                 cJSON_AddBoolToObject(result, "ok", err == ESP_OK);
                 cJSON_AddNumberToObject(result, "count", count);
-                sb_event_publish("servo.sync_move", "{\"count\":1}");
+                cJSON_AddBoolToObject(result, "extended", has_ext);
+                char sync_ev[96];
+                snprintf(sync_ev, sizeof(sync_ev),
+                         "{\"count\":%d,\"extended\":%s}",
+                         count, has_ext ? "true" : "false");
+                sb_event_publish("servo.sync_move", sync_ev);
             } else {
                 cJSON_AddStringToObject(result, "error", "Invalid moves array");
             }
@@ -611,12 +962,41 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         }
 
     } else if (strcmp(cmd, "scan") == 0) {
-        cJSON_Delete(result);
-        cJSON *scan_result = cJSON_CreateObject();
-        cJSON *found = scan_bus();
-        cJSON_AddItemToObject(scan_result, "found_ids", found ? found : cJSON_CreateArray());
-        cJSON_AddNumberToObject(scan_result, "count", found ? cJSON_GetArraySize(found) : 0);
-        return scan_result;
+        if (s_ctx.scan_in_progress) {
+            cJSON_AddStringToObject(result, "error", "Scan already in progress");
+            bus_unlock();
+            return result;
+        }
+
+        /* Set flags WHILE holding the lock so the check-then-set is atomic.
+         * Prevents a TOCTOU race if two scan requests arrive near-simultaneously. */
+        s_ctx.abort_scan = false;
+        s_ctx.scan_in_progress = true;
+
+        /* Release command-level lock — scan task manages its own per-ping locking */
+        bus_unlock();
+
+        /* Start async scan on a separate FreeRTOS task.
+         * The httpd thread stays free to process E-stop and other requests.
+         * Results are published via event bus ('servo.scan_complete'). */
+
+        BaseType_t created = xTaskCreate(
+            scan_bus_task, "scan_bus",
+            SCAN_TASK_STACK_SIZE, NULL,
+            SCAN_TASK_PRIORITY, NULL
+        );
+
+        if (created != pdPASS) {
+            s_ctx.scan_in_progress = false;
+            ESP_LOGE(TAG, "Failed to create scan task");
+            cJSON_AddStringToObject(result, "error", "Failed to start scan task");
+            return result;
+        }
+
+        cJSON_AddStringToObject(result, "status", "scanning");
+        cJSON_AddStringToObject(result, "message",
+            "Scan started — results delivered via 'servo.scan_complete' event");
+        return result;
 
     } else if (strcmp(cmd, "set_id") == 0) {
         const cJSON *cur_j = cJSON_GetObjectItem(params, "current_id");
@@ -674,6 +1054,7 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         const cJSON *cnt_j = cJSON_GetObjectItem(params, "count");
         if (!id_j || !addr_j || !cJSON_IsNumber(id_j) || !cJSON_IsNumber(addr_j)) {
             cJSON_AddStringToObject(result, "error", "Missing id or addr");
+            bus_unlock();
             return result;
         }
         uint8_t id = (uint8_t)id_j->valueint;
@@ -685,6 +1066,7 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         int n = read_registers(id, addr, cnt, data, sizeof(data));
         if (n < cnt) {
             cJSON_AddStringToObject(result, "error", "Read failed");
+            bus_unlock();
             return result;
         }
         cJSON *vals = cJSON_AddArrayToObject(result, "data");
@@ -701,6 +1083,7 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         if (!id_j || !addr_j || !data_j || !cJSON_IsNumber(id_j) ||
             !cJSON_IsNumber(addr_j) || !cJSON_IsArray(data_j)) {
             cJSON_AddStringToObject(result, "error", "Missing id, addr, or data[]");
+            bus_unlock();
             return result;
         }
         uint8_t id = (uint8_t)id_j->valueint;
@@ -709,6 +1092,7 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         int cnt = cJSON_GetArraySize(data_j);
         if (cnt <= 0 || cnt > 50) {
             cJSON_AddStringToObject(result, "error", "data[] must be 1-50 bytes");
+            bus_unlock();
             return result;
         }
         uint8_t data[50];
@@ -743,11 +1127,13 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         const cJSON *id_j = cJSON_GetObjectItem(params, "id");
         if (!id_j || !cJSON_IsNumber(id_j)) {
             cJSON_AddStringToObject(result, "error", "Missing id");
+            bus_unlock();
             return result;
         }
         uint8_t id = (uint8_t)id_j->valueint;
         if (!ping_servo(id)) {
             cJSON_AddStringToObject(result, "error", "Servo not found");
+            bus_unlock();
             return result;
         }
         /* Read EEPROM registers 0-49 (covers all writable EEPROM + lock) */
@@ -758,6 +1144,7 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         int n2 = read_registers(id, 25, 25, eeprom + 25, 25);
         if (n1 < 25 || n2 < 25) {
             cJSON_AddStringToObject(result, "error", "Failed to read EEPROM");
+            bus_unlock();
             return result;
         }
         cJSON_AddNumberToObject(result, "id", id);
@@ -776,16 +1163,19 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
 
         if (!id_j || !cJSON_IsNumber(id_j) || !eeprom_j || !cJSON_IsArray(eeprom_j)) {
             cJSON_AddStringToObject(result, "error", "Missing id or eeprom array");
+            bus_unlock();
             return result;
         }
         uint8_t id = (uint8_t)id_j->valueint;
         int arr_size = cJSON_GetArraySize(eeprom_j);
         if (arr_size < 48) {
             cJSON_AddStringToObject(result, "error", "eeprom array too short (need >= 48)");
+            bus_unlock();
             return result;
         }
         if (!ping_servo(id)) {
             cJSON_AddStringToObject(result, "error", "Servo not found");
+            bus_unlock();
             return result;
         }
 
@@ -838,11 +1228,13 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         const cJSON *id_j = cJSON_GetObjectItem(params, "id");
         if (!id_j || !cJSON_IsNumber(id_j)) {
             cJSON_AddStringToObject(result, "error", "Missing id");
+            bus_unlock();
             return result;
         }
         uint8_t id = (uint8_t)id_j->valueint;
         if (!ping_servo(id)) {
             cJSON_AddStringToObject(result, "error", "Servo not found");
+            bus_unlock();
             return result;
         }
 
@@ -850,6 +1242,7 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
         esp_err_t err = send_instruction(id, STS_INST_RESET, NULL, 0);
         if (err != ESP_OK) {
             cJSON_AddStringToObject(result, "error", "Failed to send RESET instruction");
+            bus_unlock();
             return result;
         }
         /* Allow EEPROM write time — servo resets all registers */
@@ -888,17 +1281,13 @@ static cJSON *plugin_handle_command(sb_plugin_t *self, const char *cmd, const cJ
             "Native RESET applied — servo restored to its own factory defaults. ID preserved.");
         ESP_LOGI(TAG, "Factory reset servo %d via native RESET instruction", id);
 
-    } else if (strcmp(cmd, "emergency_stop") == 0) {
-        esp_err_t err = emergency_stop_all();
-        cJSON_AddBoolToObject(result, "stopped", true);
-        cJSON_AddBoolToObject(result, "ok", err == ESP_OK);
-        sb_event_publish("servo.emergency_stop", "{\"stopped\":true}");
-
     } else {
+        /* Note: emergency_stop is handled in the fast-path above (before bus_lock) */
         cJSON_AddStringToObject(result, "error", "Unknown command");
         cJSON_AddStringToObject(result, "command", cmd);
     }
 
+    bus_unlock();
     return result;
 }
 
@@ -913,16 +1302,25 @@ static sb_health_status_t plugin_health_check(sb_plugin_t *self)
         return hs;
     }
 
+    /* Short timeout — don't block diagnostics waiting on a long scan/restore */
+    if (!bus_lock(pdMS_TO_TICKS(BUS_HEALTH_TIMEOUT_MS))) {
+        hs.state = SB_HEALTH_DEGRADED;
+        snprintf(hs.message, sizeof(hs.message), "Bus busy (lock timeout)");
+        return hs;
+    }
+
     /* Try pinging the first servo as a health indicator */
     if (s_ctx.servo_count > 0 && !ping_servo(s_ctx.servo_ids[0])) {
         hs.state = SB_HEALTH_DEGRADED;
         snprintf(hs.message, sizeof(hs.message), "Servo %d not responding",
                  s_ctx.servo_ids[0]);
+        bus_unlock();
         return hs;
     }
 
     hs.state = SB_HEALTH_HEALTHY;
     snprintf(hs.message, sizeof(hs.message), "%d servos on bus", s_ctx.servo_count);
+    bus_unlock();
     return hs;
 }
 

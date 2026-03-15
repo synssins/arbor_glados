@@ -28,7 +28,7 @@ class TestArborConfigDefaults:
         cfg = ArborConfig()
         assert cfg.version == "1.0"
         assert cfg.server.host == "0.0.0.0"
-        assert cfg.server.port == 8443
+        assert cfg.server.port == 8000
         assert cfg.security.jwt_algorithm == "RS256"
         assert cfg.logging.level == "INFO"
         assert cfg.nodes == []
@@ -133,7 +133,7 @@ class TestFullConfigFromDict:
             "version": "1.0",
             "server": {
                 "host": "0.0.0.0",
-                "port": 8443,
+                "port": 8000,
             },
             "security": {
                 "jwt_expiry_minutes": 120,

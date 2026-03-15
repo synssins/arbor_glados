@@ -14,10 +14,32 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from arbor_core.bridges.proxy import NodeProxy, ProxyError
 from arbor_core.config.models import BoardCapabilities, PwmServoConfig
 from arbor_core.robotics.backends.klipper_backend import KlipperBackend, KlipperError
+
+
+# ---------------------------------------------------------------------------
+# Request body models (FastAPI auto-parses and validates these)
+# ---------------------------------------------------------------------------
+class SetPositionRequest(BaseModel):
+    """Body for PUT /pwm-servo/{channel}/position."""
+
+    position: int = Field(ge=0, le=1000, description="Servo position (0-1000).")
+
+
+class UpdateConfigRequest(BaseModel):
+    """Body for PUT /pwm-servo/{channel}/config."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    pin: int | None = Field(default=None, ge=0, le=39)
+    min_pulse_us: int | None = Field(default=None, ge=100, le=3000)
+    max_pulse_us: int | None = Field(default=None, ge=100, le=3000)
+    invert: bool | None = None
+    pull_up: bool | None = None
+    pull_down: bool | None = None
 
 logger = structlog.get_logger(__name__)
 
@@ -73,19 +95,8 @@ async def list_pwm_servos(request: Request) -> JSONResponse:
     summary="Add PWM servo",
     description="Add a new PWM servo configuration.",
 )
-async def add_pwm_servo(request: Request) -> JSONResponse:
+async def add_pwm_servo(config: PwmServoConfig, request: Request) -> JSONResponse:
     """Add a PWM servo configuration."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
-
-    # Validate with Pydantic model
-    try:
-        config = PwmServoConfig(**body)
-    except Exception as exc:
-        return JSONResponse(status_code=422, content={"detail": str(exc)})
-
     configs = _get_pwm_configs(request)
 
     # Check for duplicate channel
@@ -152,17 +163,8 @@ async def get_pwm_servo_state(channel: int, request: Request) -> JSONResponse:
     summary="Set PWM servo position",
     description="Set position (0-1000) for a PWM servo.",
 )
-async def set_pwm_servo_position(channel: int, request: Request) -> JSONResponse:
+async def set_pwm_servo_position(channel: int, body: SetPositionRequest, request: Request) -> JSONResponse:
     """Set position for a PWM servo."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
-
-    position = body.get("position")
-    if position is None or not isinstance(position, (int, float)):
-        return JSONResponse(status_code=422, content={"detail": "'position' is required (number)"})
-
     configs = _get_pwm_configs(request)
     config = next((c for c in configs if c["channel"] == channel), None)
     if config is None:
@@ -174,7 +176,8 @@ async def set_pwm_servo_position(channel: int, request: Request) -> JSONResponse
         if proxy is not None:
             try:
                 result = await proxy.forward(
-                    config["node_id"], "PUT", f"/pwm-servo/{channel}/position", body
+                    config["node_id"], "PUT", f"/pwm-servo/{channel}/position",
+                    {"position": body.position},
                 )
                 return JSONResponse(content=result)
             except ProxyError as exc:
@@ -187,10 +190,10 @@ async def set_pwm_servo_position(channel: int, request: Request) -> JSONResponse
             return JSONResponse(status_code=503, content={"detail": "Klipper backend not available"})
         klipper_name = config.get("klipper_name", f"servo{channel}")
         # Convert 0-1000 to angle (0-180)
-        angle = position / 1000.0 * 180.0
+        angle = body.position / 1000.0 * 180.0
         try:
             result = await klipper.send_position(klipper_name, angle, is_servo=True)
-            return JSONResponse(content={"ok": True, "position": position, "angle": angle})
+            return JSONResponse(content={"ok": True, "position": body.position, "angle": angle})
         except KlipperError as exc:
             return JSONResponse(content={"status": "error", "error": str(exc)})
 
@@ -202,20 +205,15 @@ async def set_pwm_servo_position(channel: int, request: Request) -> JSONResponse
     summary="Update PWM servo config",
     description="Update configuration for a PWM servo.",
 )
-async def update_pwm_servo_config(channel: int, request: Request) -> JSONResponse:
+async def update_pwm_servo_config(channel: int, body: UpdateConfigRequest, request: Request) -> JSONResponse:
     """Update a PWM servo configuration."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
-
     configs = _get_pwm_configs(request)
-    for i, config in enumerate(configs):
+    for config in configs:
         if config["channel"] == channel:
-            # Update fields
-            for key in ("name", "pin", "min_pulse_us", "max_pulse_us", "invert", "pull_up", "pull_down"):
-                if key in body:
-                    config[key] = body[key]
+            # Update only fields that were explicitly provided
+            updates = body.model_dump(exclude_unset=True)
+            for key, value in updates.items():
+                config[key] = value
             logger.info("pwm_servo_updated", channel=channel)
             return JSONResponse(content={"ok": True, "servo": config})
 

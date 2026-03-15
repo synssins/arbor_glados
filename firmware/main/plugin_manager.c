@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char *TAG = "sb_plugins";
 
@@ -28,6 +29,20 @@ typedef struct {
 static plugin_entry_t s_plugins[CONFIG_SB_MAX_PLUGINS];
 static uint8_t s_count = 0;
 static bool s_manager_initialized = false;
+
+/* ── Command Timing Thresholds ── */
+
+/** Commands exceeding this are logged at WARNING level.
+ *  Covers normal operations (get_state, set_position, etc.) which
+ *  should complete in < 100ms.  Admin operations (factory_reset,
+ *  restore, set_id) legitimately take 200-800ms and will trigger
+ *  the warning — this is intentional for visibility. */
+#define CMD_WARN_THRESHOLD_US   200000   /* 200ms */
+
+/** Commands exceeding this are logged at ERROR level.
+ *  Any command taking this long suggests a hardware issue,
+ *  bus contention, or a stuck operation. */
+#define CMD_ERROR_THRESHOLD_US  2000000  /* 2s */
 
 esp_err_t sb_plugin_manager_init(void)
 {
@@ -222,8 +237,56 @@ cJSON *sb_plugin_dispatch(const char *plugin_name, const char *cmd, const cJSON 
         return NULL;
     }
 
+    /* ── Command timing watchdog ──
+     * Measures wall-clock time for every plugin command.
+     * Adds elapsed_us to the response JSON for upstream monitoring.
+     * Logs warnings for slow commands — does NOT enforce a deadline,
+     * because killing a command mid-EEPROM-write could brick a servo. */
+    int64_t start_us = esp_timer_get_time();
+
     ESP_LOGD(TAG, "Dispatching '%s' to plugin '%s'", cmd, plugin_name);
-    return p->handle_command(p, cmd, params);
+    cJSON *result = p->handle_command(p, cmd, params);
+
+    int64_t elapsed_us = esp_timer_get_time() - start_us;
+
+    /* Log based on elapsed time */
+    if (elapsed_us > CMD_ERROR_THRESHOLD_US) {
+        ESP_LOGE(TAG, "VERY SLOW COMMAND: %s.%s took %lld us (%.1f ms) — "
+                 "possible bus hang or hardware issue",
+                 plugin_name, cmd, (long long)elapsed_us,
+                 (double)elapsed_us / 1000.0);
+    } else if (elapsed_us > CMD_WARN_THRESHOLD_US) {
+        ESP_LOGW(TAG, "Slow command: %s.%s took %lld us (%.1f ms)",
+                 plugin_name, cmd, (long long)elapsed_us,
+                 (double)elapsed_us / 1000.0);
+    } else {
+        ESP_LOGD(TAG, "Command %s.%s completed in %lld us",
+                 plugin_name, cmd, (long long)elapsed_us);
+    }
+
+    /* Inject timing into response JSON so HTTP callers get visibility.
+     * Only add if result is a JSON object (not array or null).
+     * Guard against collision if a plugin already set its own elapsed_us.
+     *
+     * NOTE: Timing side-channel consideration — elapsed_us leaks
+     * server-side execution timing to all API callers.  Acceptable
+     * for Phase 1 (LAN-only, grade-school STEMMA classes).  Gate
+     * or remove before any internet-facing deployment.
+     *
+     * NOTE: api_emergency.c intentionally bypasses sb_plugin_dispatch()
+     * and calls p->handle_command() directly for performance.  It has
+     * its own timing instrumentation (100ms deadline).  This watchdog
+     * does NOT cover the E-stop path — by design. */
+    if (result != NULL && cJSON_IsObject(result)) {
+        if (!cJSON_HasObjectItem(result, "elapsed_us")) {
+            cJSON_AddNumberToObject(result, "elapsed_us", (double)elapsed_us);
+        } else {
+            /* Plugin already reported its own timing — use a distinct key */
+            cJSON_AddNumberToObject(result, "dispatch_elapsed_us", (double)elapsed_us);
+        }
+    }
+
+    return result;
 }
 
 cJSON *sb_plugin_list_json(void)

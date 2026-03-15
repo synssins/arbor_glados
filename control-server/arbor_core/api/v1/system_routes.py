@@ -57,6 +57,10 @@ async def system_info(request: Request) -> JSONResponse:
 
     node_count = len(config.nodes) if config else 0
 
+    # Check if system is in provisioning mode (no API keys exist yet)
+    api_key_mgr = getattr(request.app.state, "api_key_manager", None)
+    provisioning_mode = api_key_mgr is not None and api_key_mgr.key_count == 0
+
     return JSONResponse(
         content={
             "platform": platform.system(),
@@ -65,6 +69,7 @@ async def system_info(request: Request) -> JSONResponse:
             "arbor_version": __version__,
             "node_count": node_count,
             "loaded_plugins": loaded_plugins,
+            "provisioning_mode": provisioning_mode,
         }
     )
 

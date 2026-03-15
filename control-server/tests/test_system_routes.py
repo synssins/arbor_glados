@@ -189,7 +189,7 @@ class TestSystemConfig:
             assert resp.status_code == 200
             data = resp.json()
             assert data["version"] == "1.0"
-            assert data["server"]["port"] == 8443
+            assert data["server"]["port"] == 8000
 
     async def test_secrets_redacted(
         self, api_key_mgr: APIKeyManager, read_key: str

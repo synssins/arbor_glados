@@ -105,7 +105,11 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         ARBOR__SERVER__PORT=9443     -> data["server"]["port"] = "9443"
         ARBOR__LOGGING__LEVEL=DEBUG  -> data["logging"]["level"] = "DEBUG"
 
-    Values are strings; Pydantic handles type coercion.
+    Values are strings; Pydantic handles type coercion for scalar types.
+
+    NOTE: List-type config values (e.g. server.cors.allowed_origins) cannot
+    be set via env vars — use a mounted YAML config file instead. A future
+    enhancement could parse JSON arrays or comma-separated values.
 
     Args:
         data: Config dictionary to overlay onto.

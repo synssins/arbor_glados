@@ -125,10 +125,18 @@ static esp_err_t handle_pwm_position(httpd_req_t *req, int channel)
         return sb_json_error(req, "400 Bad Request", "Missing 'position' field");
     }
 
+    /* Save value before freeing body — pos_j is a child of body */
+    const int position = pos_j->valueint;
+    cJSON_Delete(body);
+
+    if (position < 0 || position > 1000) {
+        return sb_json_error(req, "400 Bad Request",
+                             "Position must be 0-1000");
+    }
+
     cJSON *params = cJSON_CreateObject();
     cJSON_AddNumberToObject(params, "channel", channel);
-    cJSON_AddNumberToObject(params, "position", pos_j->valueint);
-    cJSON_Delete(body);
+    cJSON_AddNumberToObject(params, "position", position);
 
     cJSON *result = sb_plugin_dispatch("servo-pwm", "set_position", params);
     cJSON_Delete(params);
@@ -137,7 +145,7 @@ static esp_err_t handle_pwm_position(httpd_req_t *req, int channel)
         return sb_json_error(req, "502 Bad Gateway", "PWM servo plugin not available");
     }
 
-    cJSON_AddNumberToObject(result, "position", pos_j->valueint);
+    cJSON_AddNumberToObject(result, "position", position);
     esp_err_t ret = sb_json_respond(req, "200 OK", result);
     cJSON_Delete(result);
     return ret;

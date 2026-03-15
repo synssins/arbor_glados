@@ -222,7 +222,18 @@ async def revoke_api_key(key_id: str, request: Request) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     mgr = _get_api_key_manager(request)
-    revoked = mgr.revoke_key(key_id)
+
+    try:
+        revoked = mgr.revoke_key(key_id)
+    except ValueError as exc:
+        # Last-key guard: manager refuses to revoke the final active key
+        logger.warning("revoke_blocked_last_key", key_id=key_id)
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc) + ". Create a new code before revoking this one.",
+            },
+        )
 
     if not revoked:
         return JSONResponse(status_code=404, content={"detail": "Not found"})

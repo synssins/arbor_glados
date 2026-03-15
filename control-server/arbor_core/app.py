@@ -14,6 +14,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from arbor_core.api.v1.router import router as api_v1_router
+from arbor_core.auth.api_keys import APIKeyManager
+from arbor_core.auth.headers import SecurityHeadersMiddleware
+from arbor_core.auth.middleware import AuthMiddleware
 from arbor_core.bridges.factory import create_transport
 from arbor_core.bridges.node_bridge import NodeBridge
 from arbor_core.bridges.proxy import NodeProxy
@@ -165,19 +168,80 @@ def create_app(config: "ArborConfig | None" = None) -> FastAPI:
             config = ArborConfig()
     app.state.config = config
 
-    # Configure CORS - origins will come from config (C02/C03)
-    # For now, using restrictive defaults
+    # Create auth infrastructure from config
+    security_cfg = getattr(config, "security", None)
+    api_key_manager = APIKeyManager(
+        min_key_length=security_cfg.api_key_min_length if security_cfg else 32,
+    )
+    app.state.api_key_manager = api_key_manager
+
+    # Create JWT manager if RSA keys are configured
+    jwt_manager = None
+    if (
+        security_cfg
+        and security_cfg.jwt_private_key_path
+        and security_cfg.jwt_public_key_path
+    ):
+        from arbor_core.auth.jwt import JWTManager
+
+        try:
+            jwt_manager = JWTManager.from_key_files(
+                private_key_path=security_cfg.jwt_private_key_path,
+                public_key_path=security_cfg.jwt_public_key_path,
+                expiry_minutes=security_cfg.jwt_expiry_minutes,
+            )
+            logger.info("jwt_manager_created")
+        except (FileNotFoundError, OSError):
+            logger.warning(
+                "jwt_keys_not_found",
+                private=str(security_cfg.jwt_private_key_path),
+                public=str(security_cfg.jwt_public_key_path),
+            )
+    app.state.jwt_manager = jwt_manager
+
+    # ── Middleware stack ──────────────────────────────────────────────
+    # Starlette executes middleware outermost-first. The LAST middleware
+    # added wraps outermost. We want:
+    #   Request → CORS → SecurityHeaders → Auth → route handler
+    # So we add in innermost-first order:
+
+    # 1. Auth middleware (innermost — runs last on request, first on response)
+    app.add_middleware(
+        AuthMiddleware,
+        api_key_manager=api_key_manager,
+        jwt_manager=jwt_manager,
+        default_rate_limit_rpm=(
+            security_cfg.rate_limit_default_rpm if security_cfg else 300
+        ),
+    )
+
+    # 2. Security headers middleware (adds headers to all responses)
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # 3. CORS middleware (outermost — handles OPTIONS preflight before auth)
+    cors_origins = config.server.cors.allowed_origins
+    if not cors_origins:
+        # No origins configured — allow all for first-boot / development.
+        # Mirrors provisioning mode: works out of the box, warns to lock down.
+        cors_origins = ["*"]
+        logger.warning(
+            "cors_wildcard_origins",
+            hint="CORS allows all origins. Set server.cors.allowed_origins in config to restrict.",
+        )
+    else:
+        logger.info("cors_configured", origins=cors_origins)
+
+    # NOTE: allow_methods and allow_headers are structural constants tied to
+    # the API design, not deployment tunables. They track which HTTP methods
+    # and headers the API actually consumes. Promote to CORSConfig only if a
+    # future phase needs configurable methods/headers (e.g. ROS2 bridge).
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # TODO(C02/C03): Populate from config.server.cors.allowed_origins
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
         allow_headers=["Authorization", "Content-Type"],
     )
-
-    # Security headers middleware will be added in C07
-    # Rate limiting middleware will be added in C07
-    # Auth middleware will be added in C07
 
     # Mount API routers
     app.include_router(api_v1_router, prefix="/api/v1")
